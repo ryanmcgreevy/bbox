@@ -59,6 +59,9 @@ class ImageBboxSelector:
         self.root.bind("<Control-z>", self.undo_last_box_event)  # Undo
         self.root.bind("h", self.toggle_legend_event)       # Toggle legend
 
+        # Size the window to the image while keeping it within the display
+        self.set_initial_window_size()
+
         # Initial draw overlays
         self.redraw_overlays()
 
@@ -95,6 +98,22 @@ class ImageBboxSelector:
         x = max(0, min(self.original_w - 1, x))
         y = max(0, min(self.original_h - 1, y))
         return x, y
+
+    def set_initial_window_size(self):
+        self.root.update_idletasks()
+
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+
+        max_w = max(400, screen_w - 100)
+        max_h = max(300, screen_h - 120)
+
+        window_w = min(self.display_w, max_w)
+        window_h = min(self.display_h, max_h)
+
+        x = max((screen_w - window_w) // 2, 0)
+        y = max((screen_h - window_h) // 2, 0)
+        self.root.geometry(f"{window_w}x{window_h}+{x}+{y}")
 
     # -----------------------------
     # Drawing & events
