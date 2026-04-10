@@ -265,8 +265,9 @@ class ImageBboxSelector:
             "image_size": {"width": self.original_w, "height": self.original_h},
             "boxes": self.boxes
         }
-        with open(self.output_json, "w", encoding="utf-8") as f:
+        with open(self.output_json, "a", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
+            f.write("\n")
         print(f"Saved {len(self.boxes)} boxes to {self.output_json}")
         return True
 
