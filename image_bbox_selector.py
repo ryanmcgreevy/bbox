@@ -6,9 +6,9 @@ from PIL import Image, ImageTk
 
 
 class ImageBboxSelector:
-    def __init__(self, image_path):
+    def __init__(self, image_path, boxes=None, output_json=None):
         self.root = tk.Tk()
-        self.root.title("Image BBox Selector")
+        self.root.title(f"Image BBox Selector - {os.path.basename(image_path)}")
 
         # Load original image
         self.image_path = image_path
@@ -29,7 +29,7 @@ class ImageBboxSelector:
 
         # Bounding boxes are stored in ORIGINAL image coordinates
         # each box: {"x1": int, "y1": int, "x2": int, "y2": int, "label": str}
-        self.boxes = []
+        self.boxes = [self.validate_box(box) for box in (boxes or [])]
 
         # During draw operation (in display coords)
         self.current_rect_id = None
@@ -42,7 +42,7 @@ class ImageBboxSelector:
         self.legend_text_id = None
 
         # Output JSON file path is chosen via a Save As dialog
-        self.output_json = None
+        self.output_json = output_json
 
         # Bind mouse events
         self.canvas.bind("<ButtonPress-1>", self.on_button_press)
@@ -52,11 +52,15 @@ class ImageBboxSelector:
         # Resize handling
         self.canvas.bind("<Configure>", self.on_window_resize)
 
+        # Menu bar
+        self.create_menu_bar()
+
         # Keyboard shortcuts
         self.root.bind("s", self.save_boxes_json_event)     # Save
         self.root.bind("c", self.clear_boxes_event)         # Clear
         self.root.bind("u", self.undo_last_box_event)       # Undo fallback
         self.root.bind("<Control-z>", self.undo_last_box_event)  # Undo
+        self.root.bind("l", self.load_boxes_json_event)     # Load JSON
         self.root.bind("h", self.toggle_legend_event)       # Toggle legend
 
         # Size the window to the image while keeping it within the display
@@ -99,6 +103,16 @@ class ImageBboxSelector:
         y = max(0, min(self.original_h - 1, y))
         return x, y
 
+    @staticmethod
+    def validate_box(box):
+        return {
+            "x1": int(box["x1"]),
+            "y1": int(box["y1"]),
+            "x2": int(box["x2"]),
+            "y2": int(box["y2"]),
+            "label": str(box.get("label", ""))
+        }
+
     def set_initial_window_size(self):
         self.root.update_idletasks()
 
@@ -114,6 +128,22 @@ class ImageBboxSelector:
         x = max((screen_w - window_w) // 2, 0)
         y = max((screen_h - window_h) // 2, 0)
         self.root.geometry(f"{window_w}x{window_h}+{x}+{y}")
+
+    def create_menu_bar(self):
+        menubar = tk.Menu(self.root)
+
+        file_menu = tk.Menu(menubar, tearoff=0)
+        file_menu.add_command(label="Open Image...", command=self.open_image_event)
+        file_menu.add_command(label="Open JSON...", command=self.load_boxes_json_event)
+        file_menu.add_separator()
+        file_menu.add_command(label="Save JSON...", command=self.save_boxes_json_event)
+        file_menu.add_separator()
+        file_menu.add_command(label="Clear Boxes", command=self.clear_boxes_event)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self.root.destroy)
+
+        menubar.add_cascade(label="File", menu=file_menu)
+        self.root.config(menu=menubar)
 
     # -----------------------------
     # Drawing & events
@@ -225,7 +255,7 @@ class ImageBboxSelector:
 
     def draw_legend(self):
         legend_text = (
-            "Shortcuts: S=Save  C=Clear  Ctrl+Z/U=Undo  H=Hide/Show\n"
+            "Shortcuts: S=Save  L=Load  C=Clear  Ctrl+Z/U=Undo  H=Hide/Show\n"
             f"Boxes: {len(self.boxes)}"
         )
 
@@ -254,6 +284,25 @@ class ImageBboxSelector:
     # -----------------------------
     # Actions
     # -----------------------------
+    @staticmethod
+    def read_annotation_json(json_path):
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        image_path = data.get("image")
+        if not image_path:
+            raise ValueError("JSON file does not contain an image path.")
+
+        if not os.path.isabs(image_path):
+            image_path = os.path.join(os.path.dirname(json_path), image_path)
+        image_path = os.path.abspath(image_path)
+
+        if not os.path.exists(image_path):
+            raise FileNotFoundError(f"Image not found: {image_path}")
+
+        boxes = [ImageBboxSelector.validate_box(box) for box in data.get("boxes", [])]
+        return image_path, boxes
+
     def get_default_output_path(self):
         image_dir = os.path.dirname(self.image_path) or "."
         image_name = os.path.splitext(os.path.basename(self.image_path))[0]
@@ -273,6 +322,69 @@ class ImageBboxSelector:
             return True
         return False
 
+    def load_boxes_json(self, json_path=None):
+        if not json_path:
+            json_path = filedialog.askopenfilename(
+                title="Open bounding boxes JSON",
+                filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+            )
+            if not json_path:
+                return False
+
+        image_path, boxes = self.read_annotation_json(json_path)
+
+        self.image_path = image_path
+        self.original_image = Image.open(image_path)
+        self.original_w, self.original_h = self.original_image.size
+        self.display_image = self.original_image.copy()
+        self.tk_image = ImageTk.PhotoImage(self.display_image)
+        self.display_w, self.display_h = self.display_image.size
+
+        self.canvas.config(width=self.display_w, height=self.display_h)
+        self.canvas.itemconfig("image", image=self.tk_image)
+        self.canvas.coords("image", 0, 0)
+
+        self.boxes = boxes
+        self.output_json = json_path
+        self.root.title(f"Image BBox Selector - {os.path.basename(image_path)}")
+
+        self.set_initial_window_size()
+        self.redraw_overlays()
+        return True
+
+    def load_boxes_json_event(self, _event=None):
+        try:
+            if self.load_boxes_json():
+                messagebox.showinfo("Loaded", f"Loaded {len(self.boxes)} boxes from {self.output_json}")
+        except Exception as exc:
+            messagebox.showerror("Load Error", str(exc))
+
+    def open_image_event(self):
+        image_path = filedialog.askopenfilename(
+            title="Open image",
+            filetypes=[("Image files", "*.png *.jpg *.jpeg *.bmp *.gif *.tiff"), ("All files", "*.*")]
+        )
+        if not image_path:
+            return
+
+        self.image_path = image_path
+        self.original_image = Image.open(image_path)
+        self.original_w, self.original_h = self.original_image.size
+        self.display_image = self.original_image.copy()
+        self.tk_image = ImageTk.PhotoImage(self.display_image)
+        self.display_w, self.display_h = self.display_image.size
+
+        self.canvas.config(width=self.display_w, height=self.display_h)
+        self.canvas.itemconfig("image", image=self.tk_image)
+        self.canvas.coords("image", 0, 0)
+
+        self.boxes = []
+        self.output_json = None
+        self.root.title(f"Image BBox Selector - {os.path.basename(image_path)}")
+
+        self.set_initial_window_size()
+        self.redraw_overlays()
+
     def save_boxes_json(self, prompt_for_path=False):
         if prompt_for_path or not self.output_json:
             if not self.choose_output_json_path():
@@ -284,7 +396,7 @@ class ImageBboxSelector:
             "image_size": {"width": self.original_w, "height": self.original_h},
             "boxes": self.boxes
         }
-        with open(self.output_json, "a", encoding="utf-8") as f:
+        with open(self.output_json, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
             f.write("\n")
         print(f"Saved {len(self.boxes)} boxes to {self.output_json}")
@@ -318,11 +430,20 @@ if __name__ == "__main__":
     # Hide root during file picker to avoid odd UX flash
     picker_root = tk.Tk()
     picker_root.withdraw()
-    image_path = filedialog.askopenfilename(
-        title="Select image",
-        filetypes=[("Image files", "*.png *.jpg *.jpeg *.bmp *.gif *.tiff"), ("All files", "*.*")]
+    selected_path = filedialog.askopenfilename(
+        title="Select image or bounding boxes JSON",
+        filetypes=[
+            ("Supported files", "*.png *.jpg *.jpeg *.bmp *.gif *.tiff *.json"),
+            ("JSON files", "*.json"),
+            ("Image files", "*.png *.jpg *.jpeg *.bmp *.gif *.tiff"),
+            ("All files", "*.*")
+        ]
     )
     picker_root.destroy()
 
-    if image_path:
-        ImageBboxSelector(image_path)
+    if selected_path:
+        if selected_path.lower().endswith(".json"):
+            image_path, boxes = ImageBboxSelector.read_annotation_json(selected_path)
+            ImageBboxSelector(image_path, boxes=boxes, output_json=selected_path)
+        else:
+            ImageBboxSelector(selected_path)
