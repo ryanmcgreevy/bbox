@@ -1,4 +1,5 @@
 import json
+import os
 import tkinter as tk
 from tkinter import filedialog, simpledialog, messagebox
 from PIL import Image, ImageTk
@@ -40,8 +41,8 @@ class ImageBboxSelector:
         self.legend_bg_id = None
         self.legend_text_id = None
 
-        # Output JSON file
-        self.output_json = "bounding_boxes.json"
+        # Output JSON file path is chosen via a Save As dialog
+        self.output_json = None
 
         # Bind mouse events
         self.canvas.bind("<ButtonPress-1>", self.on_button_press)
@@ -234,7 +235,31 @@ class ImageBboxSelector:
     # -----------------------------
     # Actions
     # -----------------------------
-    def save_boxes_json(self):
+    def get_default_output_path(self):
+        image_dir = os.path.dirname(self.image_path) or "."
+        image_name = os.path.splitext(os.path.basename(self.image_path))[0]
+        return os.path.join(image_dir, f"{image_name}_bounding_boxes.json")
+
+    def choose_output_json_path(self):
+        initial_path = self.output_json or self.get_default_output_path()
+        selected_path = filedialog.asksaveasfilename(
+            title="Save bounding boxes JSON",
+            defaultextension=".json",
+            initialdir=os.path.dirname(initial_path) or ".",
+            initialfile=os.path.basename(initial_path),
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+        )
+        if selected_path:
+            self.output_json = selected_path
+            return True
+        return False
+
+    def save_boxes_json(self, prompt_for_path=False):
+        if prompt_for_path or not self.output_json:
+            if not self.choose_output_json_path():
+                print("Save cancelled.")
+                return False
+
         data = {
             "image": self.image_path,
             "image_size": {"width": self.original_w, "height": self.original_h},
@@ -243,10 +268,11 @@ class ImageBboxSelector:
         with open(self.output_json, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         print(f"Saved {len(self.boxes)} boxes to {self.output_json}")
+        return True
 
     def save_boxes_json_event(self, _event=None):
-        self.save_boxes_json()
-        messagebox.showinfo("Saved", f"Saved {len(self.boxes)} boxes to {self.output_json}")
+        if self.save_boxes_json(prompt_for_path=True):
+            messagebox.showinfo("Saved", f"Saved {len(self.boxes)} boxes to {self.output_json}")
 
     def clear_boxes_event(self, _event=None):
         if not self.boxes:
