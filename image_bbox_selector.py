@@ -41,7 +41,7 @@ class ImageBboxSelector:
         self.legend_bg_id = None
         self.legend_text_id = None
 
-        # Output JSON file path is chosen via a Save As dialog
+        # Output annotation file path is chosen via a Save As dialog
         self.output_json = output_json
 
         # Bind mouse events
@@ -60,7 +60,7 @@ class ImageBboxSelector:
         self.root.bind("c", self.clear_boxes_event)         # Clear
         self.root.bind("u", self.undo_last_box_event)       # Undo fallback
         self.root.bind("<Control-z>", self.undo_last_box_event)  # Undo
-        self.root.bind("l", self.load_boxes_json_event)     # Load JSON
+        self.root.bind("l", self.load_boxes_json_event)     # Load JSONL
         self.root.bind("h", self.toggle_legend_event)       # Toggle legend
 
         # Size the window to the image while keeping it within the display
@@ -113,6 +113,14 @@ class ImageBboxSelector:
             "label": str(box.get("label", ""))
         }
 
+    @staticmethod
+    def normalize_image_path(image_path, base_dir=None):
+        if not image_path:
+            raise ValueError("Annotation record does not contain an image path.")
+        if base_dir and not os.path.isabs(image_path):
+            image_path = os.path.join(base_dir, image_path)
+        return os.path.abspath(image_path)
+
     def set_initial_window_size(self):
         self.root.update_idletasks()
 
@@ -134,9 +142,9 @@ class ImageBboxSelector:
 
         file_menu = tk.Menu(menubar, tearoff=0)
         file_menu.add_command(label="Open Image...", command=self.open_image_event)
-        file_menu.add_command(label="Open JSON...", command=self.load_boxes_json_event)
+        file_menu.add_command(label="Open JSONL...", command=self.load_boxes_json_event)
         file_menu.add_separator()
-        file_menu.add_command(label="Save JSON...", command=self.save_boxes_json_event)
+        file_menu.add_command(label="Save JSONL...", command=self.save_boxes_json_event)
         file_menu.add_separator()
         file_menu.add_command(label="Clear Boxes", command=self.clear_boxes_event)
         file_menu.add_separator()
@@ -285,37 +293,97 @@ class ImageBboxSelector:
     # Actions
     # -----------------------------
     @staticmethod
-    def read_annotation_json(json_path):
-        with open(json_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+    def load_annotation_records(annotation_path):
+        with open(annotation_path, "r", encoding="utf-8") as f:
+            content = f.read().strip()
 
-        image_path = data.get("image")
-        if not image_path:
-            raise ValueError("JSON file does not contain an image path.")
+        if not content:
+            raise ValueError("Annotation file is empty.")
 
-        if not os.path.isabs(image_path):
-            image_path = os.path.join(os.path.dirname(json_path), image_path)
-        image_path = os.path.abspath(image_path)
+        try:
+            parsed = json.loads(content)
+            if isinstance(parsed, dict):
+                return [parsed]
+            if isinstance(parsed, list):
+                if not all(isinstance(record, dict) for record in parsed):
+                    raise ValueError("Annotation list must contain JSON objects only.")
+                return parsed
+        except json.JSONDecodeError:
+            pass
 
+        records = []
+        with open(annotation_path, "r", encoding="utf-8") as f:
+            for line_number, line in enumerate(f, start=1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(f"Invalid JSON Lines record on line {line_number}: {exc}") from exc
+                if not isinstance(record, dict):
+                    raise ValueError(f"Annotation record on line {line_number} must be a JSON object.")
+                records.append(record)
+
+        if not records:
+            raise ValueError("Annotation file does not contain any records.")
+        return records
+
+    @classmethod
+    def read_annotation_file(cls, annotation_path, parent=None):
+        records = cls.load_annotation_records(annotation_path)
+
+        if len(records) == 1:
+            record = records[0]
+        else:
+            prompt_lines = [
+                "This JSON Lines file contains multiple image records.",
+                "Enter the record number to load:",
+                ""
+            ]
+            for index, record in enumerate(records, start=1):
+                image_name = os.path.basename(str(record.get("image", f"record_{index}")))
+                box_count = len(record.get("boxes", []))
+                prompt_lines.append(f"{index}: {image_name} ({box_count} boxes)")
+
+            selected_index = simpledialog.askinteger(
+                "Select Record",
+                "\n".join(prompt_lines[:25]),
+                minvalue=1,
+                maxvalue=len(records),
+                parent=parent
+            )
+            if selected_index is None:
+                raise ValueError("Annotation load cancelled.")
+            record = records[selected_index - 1]
+
+        image_path = cls.normalize_image_path(record.get("image"), os.path.dirname(annotation_path))
         if not os.path.exists(image_path):
             raise FileNotFoundError(f"Image not found: {image_path}")
 
-        boxes = [ImageBboxSelector.validate_box(box) for box in data.get("boxes", [])]
+        boxes = [cls.validate_box(box) for box in record.get("boxes", [])]
         return image_path, boxes
+
+    def build_annotation_record(self):
+        return {
+            "image": os.path.abspath(self.image_path),
+            "image_size": {"width": self.original_w, "height": self.original_h},
+            "boxes": self.boxes
+        }
 
     def get_default_output_path(self):
         image_dir = os.path.dirname(self.image_path) or "."
         image_name = os.path.splitext(os.path.basename(self.image_path))[0]
-        return os.path.join(image_dir, f"{image_name}_bounding_boxes.json")
+        return os.path.join(image_dir, f"{image_name}_bounding_boxes.jsonl")
 
     def choose_output_json_path(self):
         initial_path = self.output_json or self.get_default_output_path()
         selected_path = filedialog.asksaveasfilename(
-            title="Save bounding boxes JSON",
-            defaultextension=".json",
+            title="Save bounding boxes JSON Lines",
+            defaultextension=".jsonl",
             initialdir=os.path.dirname(initial_path) or ".",
             initialfile=os.path.basename(initial_path),
-            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+            filetypes=[("JSON Lines files", "*.jsonl"), ("JSON files", "*.json"), ("All files", "*.*")]
         )
         if selected_path:
             self.output_json = selected_path
@@ -325,13 +393,13 @@ class ImageBboxSelector:
     def load_boxes_json(self, json_path=None):
         if not json_path:
             json_path = filedialog.askopenfilename(
-                title="Open bounding boxes JSON",
-                filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+                title="Open bounding boxes JSON Lines",
+                filetypes=[("Annotation files", "*.jsonl *.json"), ("JSON Lines files", "*.jsonl"), ("JSON files", "*.json"), ("All files", "*.*")]
             )
             if not json_path:
                 return False
 
-        image_path, boxes = self.read_annotation_json(json_path)
+        image_path, boxes = self.read_annotation_file(json_path, parent=self.root)
 
         self.image_path = image_path
         self.original_image = Image.open(image_path)
@@ -391,15 +459,38 @@ class ImageBboxSelector:
                 print("Save cancelled.")
                 return False
 
-        data = {
-            "image": self.image_path,
-            "image_size": {"width": self.original_w, "height": self.original_h},
-            "boxes": self.boxes
-        }
+        records = []
+        if os.path.exists(self.output_json) and os.path.getsize(self.output_json) > 0:
+            try:
+                records = self.load_annotation_records(self.output_json)
+            except ValueError as exc:
+                messagebox.showerror("Save Error", f"Could not update annotation file:\n{exc}")
+                return False
+
+        data = self.build_annotation_record()
+        current_image_path = os.path.abspath(self.image_path)
+        updated = False
+
+        for index, record in enumerate(records):
+            try:
+                existing_image_path = self.normalize_image_path(record.get("image"), os.path.dirname(self.output_json))
+            except (TypeError, ValueError):
+                continue
+
+            if existing_image_path == current_image_path:
+                records[index] = data
+                updated = True
+                break
+
+        if not updated:
+            records.append(data)
+
         with open(self.output_json, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-            f.write("\n")
-        print(f"Saved {len(self.boxes)} boxes to {self.output_json}")
+            for record in records:
+                f.write(json.dumps(record, ensure_ascii=False))
+                f.write("\n")
+
+        print(f"Saved {len(self.boxes)} boxes for {os.path.basename(self.image_path)} to {self.output_json}")
         return True
 
     def save_boxes_json_event(self, _event=None):
@@ -431,19 +522,22 @@ if __name__ == "__main__":
     picker_root = tk.Tk()
     picker_root.withdraw()
     selected_path = filedialog.askopenfilename(
-        title="Select image or bounding boxes JSON",
+        title="Select image or annotation file",
         filetypes=[
-            ("Supported files", "*.png *.jpg *.jpeg *.bmp *.gif *.tiff *.json"),
+            ("Supported files", "*.png *.jpg *.jpeg *.bmp *.gif *.tiff *.jsonl *.json"),
+            ("JSON Lines files", "*.jsonl"),
             ("JSON files", "*.json"),
             ("Image files", "*.png *.jpg *.jpeg *.bmp *.gif *.tiff"),
             ("All files", "*.*")
         ]
     )
-    picker_root.destroy()
-
     if selected_path:
-        if selected_path.lower().endswith(".json"):
-            image_path, boxes = ImageBboxSelector.read_annotation_json(selected_path)
+        if selected_path.lower().endswith((".jsonl", ".json")):
+            image_path, boxes = ImageBboxSelector.read_annotation_file(selected_path, parent=picker_root)
+            picker_root.destroy()
             ImageBboxSelector(image_path, boxes=boxes, output_json=selected_path)
         else:
+            picker_root.destroy()
             ImageBboxSelector(selected_path)
+    else:
+        picker_root.destroy()
