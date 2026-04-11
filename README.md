@@ -59,4 +59,4 @@ Example `.jsonl` record:
 
 - **One line = one image annotation record**
 - A single record contains **all** boxes for that image
-- The app can still read older `.json` annotation files for compatibility
+- Annotation files are expected to use the `.jsonl` format

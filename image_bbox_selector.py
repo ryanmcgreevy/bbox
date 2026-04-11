@@ -258,7 +258,6 @@ class ImageBboxSelector:
                 tags="box_label"
             )
 
-
         if self.legend_visible:
             self.draw_legend()
 
@@ -295,23 +294,6 @@ class ImageBboxSelector:
     # -----------------------------
     @staticmethod
     def load_annotation_records(annotation_path):
-        with open(annotation_path, "r", encoding="utf-8") as f:
-            content = f.read().strip()
-
-        if not content:
-            raise ValueError("Annotation file is empty.")
-
-        try:
-            parsed = json.loads(content)
-            if isinstance(parsed, dict):
-                return [parsed]
-            if isinstance(parsed, list):
-                if not all(isinstance(record, dict) for record in parsed):
-                    raise ValueError("Annotation list must contain JSON objects only.")
-                return parsed
-        except json.JSONDecodeError:
-            pass
-
         records = []
         with open(annotation_path, "r", encoding="utf-8") as f:
             for line_number, line in enumerate(f, start=1):
@@ -327,7 +309,7 @@ class ImageBboxSelector:
                 records.append(record)
 
         if not records:
-            raise ValueError("Annotation file does not contain any records.")
+            raise ValueError("Annotation file does not contain any JSON Lines records.")
         return records
 
     @classmethod
@@ -384,7 +366,7 @@ class ImageBboxSelector:
             defaultextension=".jsonl",
             initialdir=os.path.dirname(initial_path) or ".",
             initialfile=os.path.basename(initial_path),
-            filetypes=[("JSON Lines files", "*.jsonl"), ("JSON files", "*.json"), ("All files", "*.*")]
+            filetypes=[("JSON Lines files", "*.jsonl"), ("All files", "*.*")]
         )
         if selected_path:
             self.output_json = selected_path
@@ -395,7 +377,7 @@ class ImageBboxSelector:
         if not json_path:
             json_path = filedialog.askopenfilename(
                 title="Open bounding boxes JSON Lines",
-                filetypes=[("Annotation files", "*.jsonl *.json"), ("JSON Lines files", "*.jsonl"), ("JSON files", "*.json"), ("All files", "*.*")]
+                filetypes=[("JSON Lines files", "*.jsonl"), ("All files", "*.*")]
             )
             if not json_path:
                 return False
@@ -525,15 +507,14 @@ if __name__ == "__main__":
     selected_path = filedialog.askopenfilename(
         title="Select image or annotation file",
         filetypes=[
-            ("Supported files", "*.png *.jpg *.jpeg *.bmp *.gif *.tiff *.jsonl *.json"),
+            ("Supported files", "*.png *.jpg *.jpeg *.bmp *.gif *.tiff *.jsonl"),
             ("JSON Lines files", "*.jsonl"),
-            ("JSON files", "*.json"),
             ("Image files", "*.png *.jpg *.jpeg *.bmp *.gif *.tiff"),
             ("All files", "*.*")
         ]
     )
     if selected_path:
-        if selected_path.lower().endswith((".jsonl", ".json")):
+        if selected_path.lower().endswith(".jsonl"):
             image_path, boxes = ImageBboxSelector.read_annotation_file(selected_path, parent=picker_root)
             picker_root.destroy()
             ImageBboxSelector(image_path, boxes=boxes, output_json=selected_path)
