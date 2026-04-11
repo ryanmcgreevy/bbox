@@ -1,8 +1,14 @@
 import json
 import os
+import posixpath
 import tkinter as tk
 from tkinter import filedialog, simpledialog, messagebox, ttk
 from PIL import Image, ImageTk
+
+try:
+    import fsspec
+except ImportError:
+    fsspec = None
 
 
 class LabelEntryDialog(simpledialog.Dialog):
@@ -282,24 +288,196 @@ class ImageBboxSelector:
         }
 
     @staticmethod
-    def normalize_image_path(image_path, base_dir=None):
+    def is_s3_path(path):
+        return str(path or "").strip().lower().startswith("s3://")
+
+    @staticmethod
+    def split_s3_url(path):
+        normalized = str(path).strip()
+        if not normalized.lower().startswith("s3://"):
+            raise ValueError(f"Not an S3 URL: {path}")
+        bucket_and_key = normalized[5:]
+        bucket, _, key = bucket_and_key.partition("/")
+        return bucket, key
+
+    @staticmethod
+    def build_s3_url(bucket, key=""):
+        key = str(key).lstrip("/")
+        return f"s3://{bucket}/{key}" if key else f"s3://{bucket}"
+
+    @classmethod
+    def join_path(cls, base_path, child_path):
+        child_path = str(child_path).strip()
+        if cls.is_s3_path(base_path):
+            if cls.is_s3_path(child_path):
+                return child_path
+            bucket, key = cls.split_s3_url(base_path)
+            joined_key = posixpath.normpath(posixpath.join("/" + key.lstrip("/"), child_path))
+            return cls.build_s3_url(bucket, joined_key.lstrip("/"))
+        return os.path.join(base_path, child_path)
+
+    @classmethod
+    def get_dirname(cls, path):
+        if cls.is_s3_path(path):
+            bucket, key = cls.split_s3_url(path)
+            return cls.build_s3_url(bucket, posixpath.dirname(key))
+        return os.path.dirname(path)
+
+    @classmethod
+    def get_basename(cls, path):
+        if cls.is_s3_path(path):
+            _, key = cls.split_s3_url(path)
+            return posixpath.basename(key.rstrip("/"))
+        return os.path.basename(path)
+
+    @classmethod
+    def normalize_path(cls, path, base_dir=None):
+        if not path:
+            raise ValueError("A file or folder path is required.")
+
+        path = str(path).strip()
+        if cls.is_s3_path(path):
+            return path
+
+        if base_dir:
+            base_dir = str(base_dir).strip()
+            if cls.is_s3_path(base_dir):
+                return cls.join_path(base_dir, path)
+            if not os.path.isabs(path):
+                path = os.path.join(base_dir, path)
+
+        return os.path.abspath(os.path.expanduser(path))
+
+    @classmethod
+    def normalize_image_path(cls, image_path, base_dir=None):
         if not image_path:
             raise ValueError("Annotation record does not contain an image path.")
-        if base_dir and not os.path.isabs(image_path):
-            image_path = os.path.join(base_dir, image_path)
-        return os.path.abspath(image_path)
+        return cls.normalize_path(image_path, base_dir=base_dir)
+
+    @classmethod
+    def require_s3_support(cls, path):
+        if cls.is_s3_path(path) and fsspec is None:
+            raise RuntimeError("S3 paths require the optional 'fsspec' and 's3fs' packages to be installed.")
+
+    @classmethod
+    def path_exists(cls, path):
+        if cls.is_s3_path(path):
+            cls.require_s3_support(path)
+            fs, fs_path = fsspec.core.url_to_fs(path)
+            return fs.exists(fs_path)
+        return os.path.exists(path)
+
+    @classmethod
+    def path_isdir(cls, path):
+        if cls.is_s3_path(path):
+            cls.require_s3_support(path)
+            fs, fs_path = fsspec.core.url_to_fs(path)
+            return fs.isdir(fs_path)
+        return os.path.isdir(path)
+
+    @classmethod
+    def path_getsize(cls, path):
+        if cls.is_s3_path(path):
+            cls.require_s3_support(path)
+            fs, fs_path = fsspec.core.url_to_fs(path)
+            return fs.size(fs_path)
+        return os.path.getsize(path)
+
+    @classmethod
+    def open_path(cls, path, mode="r", encoding=None):
+        if cls.is_s3_path(path):
+            cls.require_s3_support(path)
+            open_kwargs = {}
+            if encoding is not None and "b" not in mode:
+                open_kwargs["encoding"] = encoding
+            return fsspec.open(path, mode=mode, **open_kwargs).open()
+
+        open_kwargs = {}
+        if encoding is not None and "b" not in mode:
+            open_kwargs["encoding"] = encoding
+        return open(path, mode, **open_kwargs)
+
+    @classmethod
+    def load_image_copy(cls, image_path):
+        image_path = cls.normalize_path(image_path)
+        if cls.is_s3_path(image_path):
+            with cls.open_path(image_path, "rb") as image_file:
+                with Image.open(image_file) as image:
+                    return image.copy()
+
+        with Image.open(image_path) as image:
+            return image.copy()
+
+    @classmethod
+    def list_image_paths_in_folder(cls, folder_path):
+        folder_path = cls.normalize_path(folder_path)
+
+        if cls.is_s3_path(folder_path):
+            cls.require_s3_support(folder_path)
+            fs, fs_path = fsspec.core.url_to_fs(folder_path)
+            if not fs.exists(fs_path):
+                raise FileNotFoundError(f"Folder or prefix not found: {folder_path}")
+
+            image_paths = []
+            for entry in fs.ls(fs_path, detail=True):
+                if isinstance(entry, dict):
+                    entry_name = entry.get("name") or entry.get("Key") or entry.get("path")
+                    if entry.get("type") == "directory":
+                        continue
+                else:
+                    entry_name = str(entry)
+
+                if not entry_name:
+                    continue
+
+                candidate_path = fs.unstrip_protocol(entry_name) if hasattr(fs, "unstrip_protocol") else entry_name
+                if cls.is_supported_image_path(candidate_path):
+                    image_paths.append(candidate_path)
+
+            return sorted(image_paths)
+
+        if not os.path.isdir(folder_path):
+            raise NotADirectoryError(f"Folder not found: {folder_path}")
+
+        return [
+            os.path.join(folder_path, name)
+            for name in sorted(os.listdir(folder_path))
+            if cls.is_supported_image_path(name)
+        ]
+
+    @classmethod
+    def expand_input_paths(cls, input_paths):
+        resolved_paths = []
+        seen = set()
+        normalized_inputs = [cls.normalize_path(path) for path in input_paths if str(path).strip()]
+
+        if len(normalized_inputs) == 1 and normalized_inputs[0].lower().endswith(".jsonl"):
+            return normalized_inputs, True
+
+        for path in normalized_inputs:
+            if path.lower().endswith(".jsonl"):
+                raise ValueError("Open a JSONL annotation file by itself, not mixed with image paths.")
+
+            candidate_paths = [path] if cls.is_supported_image_path(path) else cls.list_image_paths_in_folder(path)
+            for candidate_path in candidate_paths:
+                if candidate_path not in seen:
+                    seen.add(candidate_path)
+                    resolved_paths.append(candidate_path)
+
+        return resolved_paths, False
 
     @classmethod
     def is_supported_image_path(cls, image_path):
         return str(image_path).lower().endswith(cls.SUPPORTED_IMAGE_EXTENSIONS)
 
     def create_image_record(self, image_path, boxes=None):
-        image_path = os.path.abspath(image_path)
-        if not os.path.exists(image_path):
+        image_path = self.normalize_path(image_path)
+        if not self.path_exists(image_path):
             raise FileNotFoundError(f"Image not found: {image_path}")
 
-        with Image.open(image_path) as image:
-            width, height = image.size
+        image = self.load_image_copy(image_path)
+        width, height = image.size
+        image.close()
 
         return {
             "image": image_path,
@@ -333,6 +511,78 @@ class ImageBboxSelector:
         return dialog.result
 
     @staticmethod
+    def parse_path_entries(raw_value):
+        if not raw_value:
+            return []
+
+        entries = []
+        for line in str(raw_value).replace(",", "\n").splitlines():
+            entry = line.strip().strip('"').strip("'")
+            if entry:
+                entries.append(entry)
+        return entries
+
+    @classmethod
+    def prompt_for_path_entries(cls, title, prompt_text, parent=None, initialvalue=""):
+        raw_value = simpledialog.askstring(
+            title,
+            prompt_text,
+            initialvalue=initialvalue,
+            parent=parent,
+        )
+        return cls.parse_path_entries(raw_value)
+
+    @classmethod
+    def prompt_for_startup_paths(cls, parent=None):
+        return cls.prompt_for_path_entries(
+            "Open Path or S3 URL",
+            "Enter one or more image paths, folder paths, JSONL files, or S3 URLs to open.\nUse one per line (or separate with commas).",
+            parent=parent,
+        )
+
+    def open_paths(self, entered_paths, output_json=None):
+        resolved_paths, is_jsonl = self.expand_input_paths(entered_paths)
+        if is_jsonl:
+            return self.load_boxes_json(json_path=resolved_paths[0])
+
+        if not resolved_paths:
+            raise ValueError("No supported image files were found for the provided path(s).")
+
+        self.set_loaded_image_paths(
+            resolved_paths,
+            output_json=output_json,
+            prompt_selection=len(resolved_paths) > 1,
+        )
+        return True
+
+    def open_path_event(self):
+        entered_paths = self.prompt_for_path_entries(
+            "Open Path or S3 URL",
+            "Enter one or more image paths, folder paths, JSONL files, or S3 URLs.\nUse one per line (or separate with commas).",
+            parent=self.root,
+        )
+        if not entered_paths:
+            return
+
+        try:
+            self.open_paths(entered_paths)
+        except Exception as exc:
+            messagebox.showerror("Load Error", str(exc))
+
+    def choose_output_json_path_from_prompt(self):
+        initial_path = self.output_json or self.get_default_output_path()
+        entered_path = simpledialog.askstring(
+            "Save JSONL to Path or S3 URL",
+            "Enter a destination path for the JSON Lines file.\nYou can use a local path or an S3 URL such as s3://bucket/annotations.jsonl.",
+            initialvalue=initial_path,
+            parent=self.root,
+        )
+        if entered_path:
+            self.output_json = self.normalize_path(entered_path)
+            return True
+        return False
+
+    @staticmethod
     def prompt_for_image_selection(image_paths, parent=None, prompt_title="Select Image", intro_text="Multiple images are loaded."):
         if not image_paths:
             return None
@@ -341,7 +591,7 @@ class ImageBboxSelector:
 
         prompt_lines = [intro_text, "Enter the number to display:", ""]
         for index, image_path in enumerate(image_paths, start=1):
-            prompt_lines.append(f"{index}: {os.path.basename(image_path)}")
+            prompt_lines.append(f"{index}: {ImageBboxSelector.get_basename(image_path)}")
 
         selected_index = simpledialog.askinteger(
             prompt_title,
@@ -433,7 +683,7 @@ class ImageBboxSelector:
         self.output_json = output_json
 
         if selected_image_path:
-            selected_image_path = os.path.abspath(selected_image_path)
+            selected_image_path = self.normalize_path(selected_image_path)
 
         if selected_image_path not in self.loaded_images:
             if prompt_selection and len(self.loaded_image_order) > 1:
@@ -451,7 +701,7 @@ class ImageBboxSelector:
     def set_loaded_image_paths(self, image_paths, output_json=None, prompt_selection=False):
         unique_paths = []
         for image_path in image_paths:
-            image_path = os.path.abspath(image_path)
+            image_path = self.normalize_path(image_path)
             if self.is_supported_image_path(image_path) and image_path not in unique_paths:
                 unique_paths.append(image_path)
 
@@ -481,7 +731,7 @@ class ImageBboxSelector:
 
         for image_path in self.loaded_image_order:
             box_count = len(self.loaded_images[image_path].get("boxes", []))
-            self.image_listbox.insert(tk.END, f"{os.path.basename(image_path)} ({box_count})")
+            self.image_listbox.insert(tk.END, f"{self.get_basename(image_path)} ({box_count})")
 
         target_path = select_path or self.current_image_path
         if target_path in self.loaded_image_order:
@@ -534,14 +784,13 @@ class ImageBboxSelector:
             self.redraw_overlays()
 
     def display_image_path(self, image_path):
-        image_path = os.path.abspath(image_path)
+        image_path = self.normalize_path(image_path)
         if image_path not in self.loaded_images:
             raise ValueError(f"Image is not loaded: {image_path}")
 
         self.sync_current_image_record()
 
-        with Image.open(image_path) as image:
-            self.original_image = image.copy()
+        self.original_image = self.load_image_copy(image_path)
 
         self.current_image_path = image_path
         self.image_path = image_path
@@ -556,7 +805,7 @@ class ImageBboxSelector:
         self.box_was_moved = False
 
         self.boxes = [self.validate_box(box) for box in self.loaded_images[image_path].get("boxes", [])]
-        self.root.title(f"Image BBox Selector - {os.path.basename(image_path)}")
+        self.root.title(f"Image BBox Selector - {self.get_basename(image_path)}")
 
         self.refresh_image_list(select_path=image_path)
         self.refresh_label_list(select_index=None)
@@ -648,9 +897,11 @@ class ImageBboxSelector:
         file_menu = tk.Menu(menubar, tearoff=0)
         file_menu.add_command(label="Open Image(s)...", command=self.open_image_event)
         file_menu.add_command(label="Open Folder...", command=self.open_folder_event)
+        file_menu.add_command(label="Open Path/URL...", command=self.open_path_event)
         file_menu.add_command(label="Open JSONL...", command=self.load_boxes_json_event)
         file_menu.add_separator()
         file_menu.add_command(label="Save JSONL...", command=self.save_boxes_json_event)
+        file_menu.add_command(label="Save JSONL to Path/URL...", command=self.save_boxes_json_to_path_event)
         file_menu.add_separator()
         file_menu.add_command(label="Clear Boxes", command=self.clear_boxes_event)
         file_menu.add_separator()
@@ -887,10 +1138,11 @@ class ImageBboxSelector:
     # -----------------------------
     # Actions
     # -----------------------------
-    @staticmethod
-    def load_annotation_records(annotation_path):
+    @classmethod
+    def load_annotation_records(cls, annotation_path):
+        annotation_path = cls.normalize_path(annotation_path)
         records = []
-        with open(annotation_path, "r", encoding="utf-8") as f:
+        with cls.open_path(annotation_path, "r", encoding="utf-8") as f:
             for line_number, line in enumerate(f, start=1):
                 line = line.strip()
                 if not line:
@@ -909,17 +1161,20 @@ class ImageBboxSelector:
 
     @classmethod
     def read_annotation_file(cls, annotation_path, parent=None):
+        annotation_path = cls.normalize_path(annotation_path)
         raw_records = cls.load_annotation_records(annotation_path)
         image_records = []
         image_paths = []
+        annotation_dir = cls.get_dirname(annotation_path)
 
         for record in raw_records:
-            image_path = cls.normalize_image_path(record.get("image"), os.path.dirname(annotation_path))
-            if not os.path.exists(image_path):
+            image_path = cls.normalize_image_path(record.get("image"), annotation_dir)
+            if not cls.path_exists(image_path):
                 raise FileNotFoundError(f"Image not found: {image_path}")
 
-            with Image.open(image_path) as image:
-                width, height = image.size
+            image = cls.load_image_copy(image_path)
+            width, height = image.size
+            image.close()
 
             image_records.append({
                 "image": image_path,
@@ -939,7 +1194,7 @@ class ImageBboxSelector:
     def build_annotation_record(self, image_path=None):
         self.sync_current_image_record()
 
-        image_path = os.path.abspath(image_path or self.current_image_path)
+        image_path = self.normalize_path(image_path or self.current_image_path)
         record = self.loaded_images[image_path]
         image_size = record.get("image_size", {})
 
@@ -953,21 +1208,31 @@ class ImageBboxSelector:
         }
 
     def get_default_output_path(self):
-        image_dir = os.path.dirname(self.image_path) or "."
-        image_name = os.path.splitext(os.path.basename(self.image_path))[0]
-        return os.path.join(image_dir, f"{image_name}_bounding_boxes.jsonl")
+        image_dir = self.get_dirname(self.image_path) or "."
+        image_name = os.path.splitext(self.get_basename(self.image_path))[0]
+        return self.join_path(image_dir, f"{image_name}_bounding_boxes.jsonl")
 
     def choose_output_json_path(self):
         initial_path = self.output_json or self.get_default_output_path()
+
+        dialog_initialdir = os.path.dirname(self.SETTINGS_FILE) or "."
+        if self.image_path and not self.is_s3_path(self.image_path):
+            dialog_initialdir = self.get_dirname(self.image_path) or dialog_initialdir
+
+        if initial_path and not self.is_s3_path(initial_path):
+            dialog_initialdir = self.get_dirname(initial_path) or dialog_initialdir
+
+        dialog_initialfile = self.get_basename(initial_path) or "annotations.jsonl"
+
         selected_path = filedialog.asksaveasfilename(
             title="Save bounding boxes JSON Lines",
             defaultextension=".jsonl",
-            initialdir=os.path.dirname(initial_path) or ".",
-            initialfile=os.path.basename(initial_path),
+            initialdir=dialog_initialdir,
+            initialfile=dialog_initialfile,
             filetypes=[("JSON Lines files", "*.jsonl"), ("All files", "*.*")]
         )
         if selected_path:
-            self.output_json = selected_path
+            self.output_json = self.normalize_path(selected_path)
             return True
         return False
 
@@ -980,6 +1245,7 @@ class ImageBboxSelector:
             if not json_path:
                 return False
 
+        json_path = self.normalize_path(json_path)
         image_records, selected_image_path = self.read_annotation_file(json_path, parent=self.root)
         self.set_loaded_records(
             image_records,
@@ -1005,7 +1271,7 @@ class ImageBboxSelector:
             return
 
         try:
-            self.set_loaded_image_paths(image_paths, output_json=None, prompt_selection=len(image_paths) > 1)
+            self.open_paths(image_paths)
         except Exception as exc:
             messagebox.showerror("Load Error", str(exc))
 
@@ -1014,11 +1280,11 @@ class ImageBboxSelector:
         if not folder_path:
             return
 
-        image_paths = [
-            os.path.join(folder_path, name)
-            for name in sorted(os.listdir(folder_path))
-            if self.is_supported_image_path(name)
-        ]
+        try:
+            image_paths = self.list_image_paths_in_folder(folder_path)
+        except Exception as exc:
+            messagebox.showerror("Load Error", str(exc))
+            return
 
         if not image_paths:
             messagebox.showinfo("No Images Found", "No supported image files were found in the selected folder.")
@@ -1076,10 +1342,11 @@ class ImageBboxSelector:
                 print("Save cancelled.")
                 return False
 
+        self.output_json = self.normalize_path(self.output_json)
         self.sync_current_image_record()
 
         existing_records = []
-        if os.path.exists(self.output_json) and os.path.getsize(self.output_json) > 0:
+        if self.path_exists(self.output_json) and self.path_getsize(self.output_json) > 0:
             try:
                 existing_records = self.load_annotation_records(self.output_json)
             except ValueError as exc:
@@ -1096,7 +1363,7 @@ class ImageBboxSelector:
 
         for record in existing_records:
             try:
-                existing_image_path = self.normalize_image_path(record.get("image"), os.path.dirname(self.output_json))
+                existing_image_path = self.normalize_image_path(record.get("image"), self.get_dirname(self.output_json))
             except (TypeError, ValueError):
                 merged_records.append(record)
                 continue
@@ -1111,7 +1378,7 @@ class ImageBboxSelector:
             if image_path not in saved_paths:
                 merged_records.append(loaded_record_map[image_path])
 
-        with open(self.output_json, "w", encoding="utf-8") as f:
+        with self.open_path(self.output_json, "w", encoding="utf-8") as f:
             for record in merged_records:
                 f.write(json.dumps(record, ensure_ascii=False))
                 f.write("\n")
@@ -1121,6 +1388,10 @@ class ImageBboxSelector:
 
     def save_boxes_json_event(self, _event=None):
         if self.save_boxes_json(prompt_for_path=True):
+            messagebox.showinfo("Saved", f"Saved annotations for {len(self.loaded_image_order)} image(s) to {self.output_json}")
+
+    def save_boxes_json_to_path_event(self):
+        if self.choose_output_json_path_from_prompt() and self.save_boxes_json(prompt_for_path=False):
             messagebox.showinfo("Saved", f"Saved annotations for {len(self.loaded_image_order)} image(s) to {self.output_json}")
 
     def clear_boxes_event(self, _event=None):
@@ -1182,19 +1453,37 @@ if __name__ == "__main__":
         ]
     )
 
-    if selected_paths:
-        if len(selected_paths) == 1 and selected_paths[0].lower().endswith(".jsonl"):
-            image_records, selected_image_path = ImageBboxSelector.read_annotation_file(selected_paths[0], parent=picker_root)
-            picker_root.destroy()
-            ImageBboxSelector(
-                output_json=selected_paths[0],
-                image_records=image_records,
-                selected_image_path=selected_image_path,
-            )
-        else:
-            image_paths = [path for path in selected_paths if ImageBboxSelector.is_supported_image_path(path)]
-            picker_root.destroy()
-            if image_paths:
-                ImageBboxSelector(image_paths=image_paths)
-    else:
-        picker_root.destroy()
+    entered_paths = []
+    if not selected_paths:
+        entered_paths = ImageBboxSelector.prompt_for_startup_paths(parent=picker_root)
+
+    picker_root.destroy()
+
+    try:
+        if selected_paths:
+            if len(selected_paths) == 1 and selected_paths[0].lower().endswith(".jsonl"):
+                json_path = ImageBboxSelector.normalize_path(selected_paths[0])
+                image_records, selected_image_path = ImageBboxSelector.read_annotation_file(json_path)
+                ImageBboxSelector(
+                    output_json=json_path,
+                    image_records=image_records,
+                    selected_image_path=selected_image_path,
+                )
+            else:
+                image_paths = [path for path in selected_paths if ImageBboxSelector.is_supported_image_path(path)]
+                if image_paths:
+                    ImageBboxSelector(image_paths=image_paths)
+        elif entered_paths:
+            resolved_paths, is_jsonl = ImageBboxSelector.expand_input_paths(entered_paths)
+            if is_jsonl:
+                json_path = resolved_paths[0]
+                image_records, selected_image_path = ImageBboxSelector.read_annotation_file(json_path)
+                ImageBboxSelector(
+                    output_json=json_path,
+                    image_records=image_records,
+                    selected_image_path=selected_image_path,
+                )
+            elif resolved_paths:
+                ImageBboxSelector(image_paths=resolved_paths)
+    except Exception as exc:
+        messagebox.showerror("Load Error", str(exc))

@@ -17,11 +17,18 @@ Simple Python tool for drawing **labeled bounding boxes** on images and saving/l
 - Python 3
 - `Pillow`
 - `tkinter` (usually included with Python)
+- Optional for S3 paths: `s3fs` and `fsspec`
 
 ## Install
 
 ```bash
 pip install pillow
+```
+
+For S3 support:
+
+```bash
+pip install s3fs fsspec
 ```
 
 You may need to install python with tk support:
@@ -57,9 +64,29 @@ python image_bbox_selector.py
 
 - `File -> Open Image(s)...` lets you select multiple image files at once
 - `File -> Open Folder...` loads all supported images from a folder
+- `File -> Open Path/URL...` accepts local paths or S3 URLs for images, folders/prefixes, and `.jsonl` files
 - `File -> Open JSONL...` loads all image records from an annotation file
 - The left sidebar shows all loaded image names and their current box counts
 - Saving writes **all currently loaded image annotations** into the chosen `.jsonl` file
+- `File -> Save JSONL to Path/URL...` lets you save annotations directly to a local path or `s3://bucket/...` destination
+
+## S3 workflow
+
+You can now open and save annotations using S3 URLs in addition to local files.
+
+Examples:
+
+```text
+s3://my-bucket/images/deer.jpg
+s3://my-bucket/images/
+s3://my-bucket/annotations/deer_boxes.jsonl
+```
+
+Notes:
+
+- S3 loading/saving uses `s3fs`/`fsspec`
+- AWS credentials must already be available in your environment
+- If you cancel the startup file picker, the app will prompt for a local path or S3 URL
 
 ## JSON Lines format
 
