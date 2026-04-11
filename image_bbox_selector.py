@@ -1,8 +1,38 @@
 import json
 import os
 import tkinter as tk
-from tkinter import filedialog, simpledialog, messagebox
+from tkinter import filedialog, simpledialog, messagebox, ttk
 from PIL import Image, ImageTk
+
+
+class LabelEntryDialog(simpledialog.Dialog):
+    def __init__(self, parent, title, prompt_text, existing_labels=None, initialvalue=""):
+        self.prompt_text = prompt_text
+        self.existing_labels = list(existing_labels or [])
+        self.initialvalue = initialvalue
+        self.result = None
+        super().__init__(parent, title)
+
+    def body(self, master):
+        tk.Label(master, text=self.prompt_text, anchor="w", justify="left").grid(row=0, column=0, sticky="w", pady=(0, 6))
+
+        self.label_var = tk.StringVar(value=self.initialvalue)
+        self.label_combobox = ttk.Combobox(
+            master,
+            textvariable=self.label_var,
+            values=self.existing_labels,
+            state="normal",
+            width=40,
+        )
+        self.label_combobox.grid(row=1, column=0, sticky="ew")
+        master.grid_columnconfigure(0, weight=1)
+
+        self.label_combobox.focus_set()
+        self.label_combobox.selection_range(0, tk.END)
+        return self.label_combobox
+
+    def apply(self):
+        self.result = self.label_var.get().strip()
 
 
 class ImageBboxSelector:
@@ -26,6 +56,7 @@ class ImageBboxSelector:
         self.loaded_image_order = []
         self.current_image_path = None
         self._updating_image_list = False
+        self._updating_label_list = False
 
         # Current display state
         self.image_path = None
@@ -60,6 +91,7 @@ class ImageBboxSelector:
 
         # Settings
         self.autosave_enabled = tk.BooleanVar(value=False)
+        self.last_used_label = ""
 
         # Main layout
         self.main_frame = tk.Frame(self.root)
@@ -69,21 +101,49 @@ class ImageBboxSelector:
         self.sidebar_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(8, 0), pady=8)
         self.sidebar_frame.pack_propagate(False)
 
+        self.image_list_section = tk.Frame(self.sidebar_frame)
+        self.image_list_section.pack(fill=tk.BOTH, expand=True)
+
         self.image_list_label = tk.Label(
-            self.sidebar_frame,
+            self.image_list_section,
             text="Loaded Images",
             anchor="w",
             font=("Arial", 10, "bold")
         )
         self.image_list_label.pack(fill=tk.X, pady=(0, 4))
 
-        self.image_listbox = tk.Listbox(self.sidebar_frame, exportselection=False)
+        self.image_list_frame = tk.Frame(self.image_list_section)
+        self.image_list_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.image_listbox = tk.Listbox(self.image_list_frame, exportselection=False)
         self.image_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.image_listbox.bind("<<ListboxSelect>>", self.on_image_list_select)
 
-        self.image_list_scrollbar = tk.Scrollbar(self.sidebar_frame, orient=tk.VERTICAL, command=self.image_listbox.yview)
+        self.image_list_scrollbar = tk.Scrollbar(self.image_list_frame, orient=tk.VERTICAL, command=self.image_listbox.yview)
         self.image_list_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.image_listbox.config(yscrollcommand=self.image_list_scrollbar.set)
+
+        self.label_list_section = tk.Frame(self.sidebar_frame)
+        self.label_list_section.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+
+        self.label_list_label = tk.Label(
+            self.label_list_section,
+            text="Labels",
+            anchor="w",
+            font=("Arial", 10, "bold")
+        )
+        self.label_list_label.pack(fill=tk.X, pady=(0, 4))
+
+        self.label_list_frame = tk.Frame(self.label_list_section)
+        self.label_list_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.label_listbox = tk.Listbox(self.label_list_frame, exportselection=False)
+        self.label_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.label_listbox.bind("<<ListboxSelect>>", self.on_label_list_select)
+
+        self.label_list_scrollbar = tk.Scrollbar(self.label_list_frame, orient=tk.VERTICAL, command=self.label_listbox.yview)
+        self.label_list_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.label_listbox.config(yscrollcommand=self.label_list_scrollbar.set)
 
         self.canvas_frame = tk.Frame(self.main_frame)
         self.canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=8, pady=8)
@@ -243,6 +303,31 @@ class ImageBboxSelector:
             "boxes": [self.validate_box(box) for box in (boxes or [])]
         }
 
+    def get_all_existing_labels(self):
+        labels = []
+        seen = set()
+
+        for image_path in self.loaded_image_order:
+            for box in self.loaded_images.get(image_path, {}).get("boxes", []):
+                label = str(box.get("label", "")).strip()
+                if label and label not in seen:
+                    seen.add(label)
+                    labels.append(label)
+
+        return labels
+
+    def prompt_for_box_label(self, title, prompt_text, initialvalue="", remember_result=True):
+        dialog = LabelEntryDialog(
+            self.root,
+            title,
+            prompt_text,
+            existing_labels=self.get_all_existing_labels(),
+            initialvalue=initialvalue,
+        )
+        if remember_result and dialog.result is not None:
+            self.last_used_label = dialog.result
+        return dialog.result
+
     @staticmethod
     def prompt_for_image_selection(image_paths, parent=None, prompt_title="Select Image", intro_text="Multiple images are loaded."):
         if not image_paths:
@@ -375,6 +460,22 @@ class ImageBboxSelector:
 
         self._updating_image_list = False
 
+    def refresh_label_list(self, select_index=None):
+        self._updating_label_list = True
+        self.label_listbox.delete(0, tk.END)
+
+        for index, box in enumerate(self.boxes, start=1):
+            label_text = box["label"] if box["label"] else f"box_{index}"
+            self.label_listbox.insert(tk.END, f"{index}: {label_text}")
+
+        self.label_listbox.selection_clear(0, tk.END)
+        target_index = self.selected_box_index if select_index is None else select_index
+        if target_index is not None and 0 <= target_index < len(self.boxes):
+            self.label_listbox.selection_set(target_index)
+            self.label_listbox.see(target_index)
+
+        self._updating_label_list = False
+
     def on_image_list_select(self, _event=None):
         if self._updating_image_list:
             return
@@ -386,6 +487,19 @@ class ImageBboxSelector:
         image_path = self.loaded_image_order[selection[0]]
         if image_path != self.current_image_path:
             self.display_image_path(image_path)
+
+    def on_label_list_select(self, _event=None):
+        if self._updating_label_list:
+            return
+
+        selection = self.label_listbox.curselection()
+        if not selection:
+            return
+
+        selected_index = selection[0]
+        if selected_index != self.selected_box_index:
+            self.selected_box_index = selected_index
+            self.redraw_overlays()
 
     def display_image_path(self, image_path):
         image_path = os.path.abspath(image_path)
@@ -413,6 +527,7 @@ class ImageBboxSelector:
         self.root.title(f"Image BBox Selector - {os.path.basename(image_path)}")
 
         self.refresh_image_list(select_path=image_path)
+        self.refresh_label_list(select_index=None)
         self.set_initial_window_size()
         self.root.update_idletasks()
         self.update_canvas_image()
@@ -543,6 +658,7 @@ class ImageBboxSelector:
             self.drag_mode = "move"
             self.drag_start_original = (click_ox, click_oy)
             self.drag_box_snapshot = dict(self.boxes[hit_index])
+            self.refresh_label_list(select_index=hit_index)
             self.redraw_overlays()
             return
 
@@ -555,6 +671,7 @@ class ImageBboxSelector:
             self.start_x, self.start_y, self.start_x, self.start_y,
             outline="red", width=2, tags="temp_rect"
         )
+        self.refresh_label_list(select_index=None)
         self.redraw_overlays()
 
     def on_mouse_drag(self, event):
@@ -576,6 +693,7 @@ class ImageBboxSelector:
             self.drag_mode = None
             self.drag_start_original = None
             self.drag_box_snapshot = None
+            self.refresh_label_list(select_index=self.selected_box_index)
             if self.box_was_moved:
                 self.sync_current_image_record()
                 self.refresh_image_list(select_path=self.current_image_path)
@@ -612,8 +730,13 @@ class ImageBboxSelector:
             self.start_y = None
             return
 
-        # Ask label
-        label = simpledialog.askstring("Box Label", "Enter label for this box:", parent=self.root)
+        # Ask label, with a dropdown of existing labels for reuse
+        label = self.prompt_for_box_label(
+            "Box Label",
+            "Enter label for this box:",
+            initialvalue=self.last_used_label,
+            remember_result=True,
+        )
         if label is None:
             label = ""  # user cancelled -> empty label
 
@@ -631,6 +754,7 @@ class ImageBboxSelector:
         self.start_y = None
         self.sync_current_image_record()
         self.refresh_image_list(select_path=self.current_image_path)
+        self.refresh_label_list(select_index=self.selected_box_index)
         self.redraw_overlays()
         self.maybe_autosave()
 
@@ -642,6 +766,7 @@ class ImageBboxSelector:
         hit_index = self.find_box_at_original_point(click_ox, click_oy)
         if hit_index is not None:
             self.selected_box_index = hit_index
+            self.refresh_label_list(select_index=hit_index)
             self.redraw_overlays()
             self.edit_selected_box_label_event()
 
@@ -877,11 +1002,11 @@ class ImageBboxSelector:
             return
 
         current_label = self.boxes[self.selected_box_index].get("label", "")
-        new_label = simpledialog.askstring(
+        new_label = self.prompt_for_box_label(
             "Edit Box Label",
             "Update label for the selected box:",
             initialvalue=current_label,
-            parent=self.root
+            remember_result=True,
         )
         if new_label is None:
             return
@@ -889,6 +1014,7 @@ class ImageBboxSelector:
         self.boxes[self.selected_box_index]["label"] = new_label
         self.sync_current_image_record()
         self.refresh_image_list(select_path=self.current_image_path)
+        self.refresh_label_list(select_index=self.selected_box_index)
         self.redraw_overlays()
         self.maybe_autosave()
 
@@ -908,6 +1034,7 @@ class ImageBboxSelector:
         self.selected_box_index = None
         self.sync_current_image_record()
         self.refresh_image_list(select_path=self.current_image_path)
+        self.refresh_label_list(select_index=None)
         self.redraw_overlays()
         self.maybe_autosave()
 
@@ -973,6 +1100,7 @@ class ImageBboxSelector:
             self.selected_box_index = None
             self.sync_current_image_record()
             self.refresh_image_list(select_path=self.current_image_path)
+            self.refresh_label_list(select_index=None)
             self.redraw_overlays()
             self.maybe_autosave()
 
@@ -983,6 +1111,7 @@ class ImageBboxSelector:
                 self.selected_box_index = len(self.boxes) - 1 if self.boxes else None
             self.sync_current_image_record()
             self.refresh_image_list(select_path=self.current_image_path)
+            self.refresh_label_list(select_index=self.selected_box_index)
             self.redraw_overlays()
             self.maybe_autosave()
 
