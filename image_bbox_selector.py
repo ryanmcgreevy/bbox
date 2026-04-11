@@ -39,10 +39,15 @@ class ImageBboxSelector:
         # Bounding boxes are stored in ORIGINAL image coordinates
         self.boxes = []
 
-        # During draw operation (in display coords)
+        # During draw/move operations
         self.current_rect_id = None
         self.start_x = None
         self.start_y = None
+        self.drag_mode = None
+        self.drag_start_original = None
+        self.drag_box_snapshot = None
+        self.selected_box_index = None
+        self.box_was_moved = False
 
         # Legend
         self.legend_visible = True
@@ -90,6 +95,7 @@ class ImageBboxSelector:
         self.canvas.bind("<ButtonPress-1>", self.on_button_press)
         self.canvas.bind("<B1-Motion>", self.on_mouse_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_button_release)
+        self.canvas.bind("<Double-Button-1>", self.on_double_click)
 
         # Resize handling
         self.canvas.bind("<Configure>", self.on_window_resize)
@@ -103,6 +109,9 @@ class ImageBboxSelector:
         self.root.bind("u", self.undo_last_box_event)       # Undo fallback
         self.root.bind("<Control-z>", self.undo_last_box_event)  # Undo
         self.root.bind("l", self.load_boxes_json_event)     # Load JSONL
+        self.root.bind("e", self.edit_selected_box_label_event)  # Edit selected label
+        self.root.bind("<Delete>", self.delete_selected_box_event)  # Delete selected box
+        self.root.bind("<BackSpace>", self.delete_selected_box_event)  # Delete selected box
         self.root.bind("h", self.toggle_legend_event)       # Toggle legend
 
         if image_records:
@@ -162,6 +171,37 @@ class ImageBboxSelector:
         x = max(0, min(self.original_w - 1, x))
         y = max(0, min(self.original_h - 1, y))
         return x, y
+
+    @staticmethod
+    def point_in_box(x, y, box, padding=0):
+        return (
+            box["x1"] - padding <= x <= box["x2"] + padding
+            and box["y1"] - padding <= y <= box["y2"] + padding
+        )
+
+    def find_box_at_original_point(self, x, y):
+        for index in range(len(self.boxes) - 1, -1, -1):
+            if self.point_in_box(x, y, self.boxes[index], padding=4):
+                return index
+        return None
+
+    def move_box(self, box, delta_x, delta_y):
+        width = box["x2"] - box["x1"]
+        height = box["y2"] - box["y1"]
+
+        max_x1 = max(0, self.original_w - 1 - width)
+        max_y1 = max(0, self.original_h - 1 - height)
+
+        new_x1 = min(max(0, box["x1"] + delta_x), max_x1)
+        new_y1 = min(max(0, box["y1"] + delta_y), max_y1)
+
+        return {
+            "x1": int(new_x1),
+            "y1": int(new_y1),
+            "x2": int(new_x1 + width),
+            "y2": int(new_y1 + height),
+            "label": box.get("label", "")
+        }
 
     @staticmethod
     def validate_box(box):
@@ -348,6 +388,11 @@ class ImageBboxSelector:
         self.current_rect_id = None
         self.start_x = None
         self.start_y = None
+        self.drag_mode = None
+        self.drag_start_original = None
+        self.drag_box_snapshot = None
+        self.selected_box_index = None
+        self.box_was_moved = False
 
         self.boxes = [self.validate_box(box) for box in self.loaded_images[image_path].get("boxes", [])]
         self.root.title(f"Image BBox Selector - {os.path.basename(image_path)}")
@@ -449,29 +494,82 @@ class ImageBboxSelector:
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.root.destroy)
 
+        edit_menu = tk.Menu(menubar, tearoff=0)
+        edit_menu.add_command(label="Edit Selected Label", command=self.edit_selected_box_label_event)
+        edit_menu.add_command(label="Delete Selected Box", command=self.delete_selected_box_event)
+
         menubar.add_cascade(label="File", menu=file_menu)
+        menubar.add_cascade(label="Edit", menu=edit_menu)
         self.root.config(menu=menubar)
 
     # -----------------------------
     # Drawing & events
     # -----------------------------
     def on_button_press(self, event):
-        self.start_x, self.start_y = event.x, event.y
+        if self.original_image is None:
+            return
+
+        click_ox, click_oy = self.display_to_original(event.x, event.y)
+        hit_index = self.find_box_at_original_point(click_ox, click_oy)
+
+        self.drag_mode = None
+        self.box_was_moved = False
+
         if self.current_rect_id is not None:
             self.canvas.delete(self.current_rect_id)
+            self.current_rect_id = None
+
+        if hit_index is not None:
+            self.selected_box_index = hit_index
+            self.drag_mode = "move"
+            self.drag_start_original = (click_ox, click_oy)
+            self.drag_box_snapshot = dict(self.boxes[hit_index])
+            self.redraw_overlays()
+            return
+
+        self.selected_box_index = None
+        self.drag_start_original = None
+        self.drag_box_snapshot = None
+        self.start_x, self.start_y = event.x, event.y
+        self.drag_mode = "draw"
         self.current_rect_id = self.canvas.create_rectangle(
             self.start_x, self.start_y, self.start_x, self.start_y,
             outline="red", width=2, tags="temp_rect"
         )
+        self.redraw_overlays()
 
     def on_mouse_drag(self, event):
-        if self.current_rect_id is not None:
+        if self.drag_mode == "move" and self.selected_box_index is not None and self.drag_start_original and self.drag_box_snapshot:
+            current_ox, current_oy = self.display_to_original(event.x, event.y)
+            delta_x = current_ox - self.drag_start_original[0]
+            delta_y = current_oy - self.drag_start_original[1]
+            moved_box = self.move_box(self.drag_box_snapshot, delta_x, delta_y)
+            self.box_was_moved = moved_box != self.drag_box_snapshot
+            self.boxes[self.selected_box_index] = moved_box
+            self.redraw_overlays()
+            return
+
+        if self.drag_mode == "draw" and self.current_rect_id is not None:
             self.canvas.coords(self.current_rect_id, self.start_x, self.start_y, event.x, event.y)
 
     def on_button_release(self, event):
-        if self.start_x is None or self.start_y is None:
+        if self.drag_mode == "move":
+            self.drag_mode = None
+            self.drag_start_original = None
+            self.drag_box_snapshot = None
+            if self.box_was_moved:
+                self.sync_current_image_record()
+                self.refresh_image_list(select_path=self.current_image_path)
+                self.redraw_overlays()
+                self.save_boxes_json()
+            else:
+                self.redraw_overlays()
             return
 
+        if self.drag_mode != "draw" or self.start_x is None or self.start_y is None:
+            return
+
+        self.drag_mode = None
         end_x, end_y = event.x, event.y
 
         # Normalize in display space
@@ -491,6 +589,8 @@ class ImageBboxSelector:
             if self.current_rect_id is not None:
                 self.canvas.delete(self.current_rect_id)
                 self.current_rect_id = None
+            self.start_x = None
+            self.start_y = None
             return
 
         # Ask label
@@ -501,16 +601,30 @@ class ImageBboxSelector:
         self.boxes.append({
             "x1": ox1, "y1": oy1, "x2": ox2, "y2": oy2, "label": label
         })
+        self.selected_box_index = len(self.boxes) - 1
 
         # Remove temp rectangle and redraw persistent overlays
         if self.current_rect_id is not None:
             self.canvas.delete(self.current_rect_id)
             self.current_rect_id = None
 
+        self.start_x = None
+        self.start_y = None
         self.sync_current_image_record()
         self.refresh_image_list(select_path=self.current_image_path)
         self.redraw_overlays()
         self.save_boxes_json()  # autosave on each box
+
+    def on_double_click(self, event):
+        if self.original_image is None:
+            return
+
+        click_ox, click_oy = self.display_to_original(event.x, event.y)
+        hit_index = self.find_box_at_original_point(click_ox, click_oy)
+        if hit_index is not None:
+            self.selected_box_index = hit_index
+            self.redraw_overlays()
+            self.edit_selected_box_label_event()
 
     def on_window_resize(self, event):
         if event.widget is not self.canvas or self.original_image is None:
@@ -538,10 +652,14 @@ class ImageBboxSelector:
         for i, b in enumerate(self.boxes, start=1):
             dx1, dy1 = self.original_to_display(b["x1"], b["y1"])
             dx2, dy2 = self.original_to_display(b["x2"], b["y2"])
+            is_selected = (i - 1 == self.selected_box_index)
+            outline_color = "cyan" if is_selected else "red"
+            label_color = "cyan" if is_selected else "red"
+            line_width = 3 if is_selected else 2
 
             self.canvas.create_rectangle(
                 dx1, dy1, dx2, dy2,
-                outline="red", width=2, tags="box"
+                outline=outline_color, width=line_width, tags="box"
             )
 
             # Label text shown near top-left of box
@@ -549,7 +667,7 @@ class ImageBboxSelector:
             self.canvas.create_text(
                 dx1 + 4, max(10, dy1 - 8),
                 text=label_text,
-                fill="red",
+                fill=label_color,
                 anchor="w",
                 font=("Arial", 14, "bold"),
                 tags="box_label"
@@ -564,7 +682,7 @@ class ImageBboxSelector:
             current_index = self.loaded_image_order.index(self.current_image_path) + 1
 
         legend_text = (
-            "Shortcuts: S=Save  L=Load  C=Clear  Ctrl+Z/U=Undo  H=Hide/Show\n"
+            "Shortcuts: S=Save  L=Load  E=Edit Label  Del=Delete  H=Hide/Show\n"
             f"Image: {current_index}/{len(self.loaded_image_order)}  Boxes: {len(self.boxes)}"
         )
 
@@ -735,6 +853,45 @@ class ImageBboxSelector:
         except Exception as exc:
             messagebox.showerror("Load Error", str(exc))
 
+    def edit_selected_box_label_event(self, _event=None):
+        if self.selected_box_index is None or not (0 <= self.selected_box_index < len(self.boxes)):
+            return
+
+        current_label = self.boxes[self.selected_box_index].get("label", "")
+        new_label = simpledialog.askstring(
+            "Edit Box Label",
+            "Update label for the selected box:",
+            initialvalue=current_label,
+            parent=self.root
+        )
+        if new_label is None:
+            return
+
+        self.boxes[self.selected_box_index]["label"] = new_label
+        self.sync_current_image_record()
+        self.refresh_image_list(select_path=self.current_image_path)
+        self.redraw_overlays()
+        self.save_boxes_json()
+
+    def delete_selected_box_event(self, _event=None):
+        if self.selected_box_index is None or not (0 <= self.selected_box_index < len(self.boxes)):
+            return
+
+        label = self.boxes[self.selected_box_index].get("label", "")
+        confirm_message = "Delete the selected bounding box?"
+        if label:
+            confirm_message = f"Delete the selected bounding box labeled '{label}'?"
+
+        if not messagebox.askyesno("Delete Box", confirm_message, parent=self.root):
+            return
+
+        self.boxes.pop(self.selected_box_index)
+        self.selected_box_index = None
+        self.sync_current_image_record()
+        self.refresh_image_list(select_path=self.current_image_path)
+        self.redraw_overlays()
+        self.save_boxes_json()
+
     def save_boxes_json(self, prompt_for_path=False):
         if prompt_for_path or not self.output_json:
             if not self.choose_output_json_path():
@@ -794,6 +951,7 @@ class ImageBboxSelector:
         confirm = messagebox.askyesno("Clear Boxes", "Clear all bounding boxes for the current image?")
         if confirm:
             self.boxes.clear()
+            self.selected_box_index = None
             self.sync_current_image_record()
             self.refresh_image_list(select_path=self.current_image_path)
             self.redraw_overlays()
@@ -802,6 +960,8 @@ class ImageBboxSelector:
     def undo_last_box_event(self, _event=None):
         if self.boxes:
             self.boxes.pop()
+            if self.selected_box_index is not None and self.selected_box_index >= len(self.boxes):
+                self.selected_box_index = len(self.boxes) - 1 if self.boxes else None
             self.sync_current_image_record()
             self.refresh_image_list(select_path=self.current_image_path)
             self.redraw_overlays()
