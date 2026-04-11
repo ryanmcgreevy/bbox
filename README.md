@@ -73,6 +73,7 @@ python image_bbox_selector.py
 ## S3 workflow
 
 You can now open and save annotations using S3 URLs in addition to local files.
+The same is true for loading images or folders (S3 prefix).
 
 Examples:
 
