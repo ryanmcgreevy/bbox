@@ -252,11 +252,12 @@ class ImageBboxSelector:
             self.canvas.create_text(
                 dx1 + 4, max(10, dy1 - 8),
                 text=label_text,
-                fill="yellow",
+                fill="red",
                 anchor="w",
-                font=("Arial", 10, "bold"),
+                font=("Arial", 14, "bold"),
                 tags="box_label"
             )
+
 
         if self.legend_visible:
             self.draw_legend()
