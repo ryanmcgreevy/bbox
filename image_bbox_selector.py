@@ -59,7 +59,7 @@ class ImageBboxSelector:
         self.output_json = output_json
 
         # Settings
-        self.autosave_enabled = tk.BooleanVar(value=True)
+        self.autosave_enabled = tk.BooleanVar(value=False)
 
         # Main layout
         self.main_frame = tk.Frame(self.root)
