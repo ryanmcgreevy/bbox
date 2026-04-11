@@ -4,9 +4,10 @@ Simple Python tool for drawing **labeled bounding boxes** on images and saving/l
 
 ## Features
 
-- Open an image and draw bounding boxes with the mouse
+- Open **one image, multiple images, or all images in a folder**
 - Add a text label to each box
-- Save annotations to a `.jsonl` file
+- Switch between loaded images using the **scrollable image list** in the sidebar
+- Save annotations for **all loaded images** to a single `.jsonl` file
 - Reopen a `.jsonl` file and display its saved boxes and labels
 - Store **one record per image**, with all boxes and tags for that image on a single line
 - Use keyboard shortcuts or the menu bar for common actions
@@ -23,6 +24,11 @@ Simple Python tool for drawing **labeled bounding boxes** on images and saving/l
 pip install pillow
 ```
 
+You may need to install python with tk support:
+```bash
+sudo apt-get install python3-tk
+```
+
 ## Run
 
 ```bash
@@ -32,10 +38,12 @@ python image_bbox_selector.py
 ## Basic usage
 
 1. Launch the app.
-2. Open an image or an existing annotation `.jsonl` file.
-3. Click and drag on the image to create a bounding box.
-4. Enter a label when prompted.
-5. Save the annotations to a `.jsonl` file.
+2. Open one or more image files, a folder of images, or an existing annotation `.jsonl` file.
+3. If multiple images are loaded, choose the first one to display when prompted.
+4. Click and drag on the image to create a bounding box.
+5. Enter a label when prompted.
+6. Use the image list in the left sidebar to switch between loaded images.
+7. Save the annotations to a `.jsonl` file.
 
 ## Shortcuts
 
@@ -44,6 +52,14 @@ python image_bbox_selector.py
 - `C` — clear all boxes
 - `Ctrl+Z` or `U` — undo last box
 - `H` — hide/show legend
+
+## Multi-image workflow
+
+- `File -> Open Image(s)...` lets you select multiple image files at once
+- `File -> Open Folder...` loads all supported images from a folder
+- `File -> Open JSONL...` loads all image records from an annotation file
+- The left sidebar shows all loaded image names and their current box counts
+- Saving writes **all currently loaded image annotations** into the chosen `.jsonl` file
 
 ## JSON Lines format
 
@@ -59,4 +75,5 @@ Example `.jsonl` record:
 
 - **One line = one image annotation record**
 - A single record contains **all** boxes for that image
+- A single `.jsonl` file can contain annotations for **multiple images**
 - Annotation files are expected to use the `.jsonl` format
