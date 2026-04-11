@@ -19,6 +19,7 @@ class ImageBboxSelector:
     ):
         self.root = tk.Tk()
         self.root.title("Image BBox Selector")
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close_request)
 
         # Loaded image records keyed by absolute image path
         self.loaded_images = {}
@@ -56,6 +57,9 @@ class ImageBboxSelector:
 
         # Output annotation file path is chosen via a Save As dialog
         self.output_json = output_json
+
+        # Settings
+        self.autosave_enabled = tk.BooleanVar(value=True)
 
         # Main layout
         self.main_frame = tk.Frame(self.root)
@@ -268,6 +272,17 @@ class ImageBboxSelector:
                 "width": int(self.original_w),
                 "height": int(self.original_h)
             }
+
+    def is_autosave_enabled(self):
+        autosave_setting = getattr(self, "autosave_enabled", True)
+        if hasattr(autosave_setting, "get"):
+            return bool(autosave_setting.get())
+        return bool(autosave_setting)
+
+    def maybe_autosave(self):
+        if self.is_autosave_enabled():
+            return self.save_boxes_json()
+        return False
 
     def set_loaded_records(self, image_records, selected_image_path=None, output_json=None, prompt_selection=False):
         normalized_records = []
@@ -492,14 +507,18 @@ class ImageBboxSelector:
         file_menu.add_separator()
         file_menu.add_command(label="Clear Boxes", command=self.clear_boxes_event)
         file_menu.add_separator()
-        file_menu.add_command(label="Exit", command=self.root.destroy)
+        file_menu.add_command(label="Exit", command=self.on_close_request)
 
         edit_menu = tk.Menu(menubar, tearoff=0)
         edit_menu.add_command(label="Edit Selected Label", command=self.edit_selected_box_label_event)
         edit_menu.add_command(label="Delete Selected Box", command=self.delete_selected_box_event)
 
+        settings_menu = tk.Menu(menubar, tearoff=0)
+        settings_menu.add_checkbutton(label="Autosave", variable=self.autosave_enabled, onvalue=True, offvalue=False)
+
         menubar.add_cascade(label="File", menu=file_menu)
         menubar.add_cascade(label="Edit", menu=edit_menu)
+        menubar.add_cascade(label="Settings", menu=settings_menu)
         self.root.config(menu=menubar)
 
     # -----------------------------
@@ -561,7 +580,7 @@ class ImageBboxSelector:
                 self.sync_current_image_record()
                 self.refresh_image_list(select_path=self.current_image_path)
                 self.redraw_overlays()
-                self.save_boxes_json()
+                self.maybe_autosave()
             else:
                 self.redraw_overlays()
             return
@@ -613,7 +632,7 @@ class ImageBboxSelector:
         self.sync_current_image_record()
         self.refresh_image_list(select_path=self.current_image_path)
         self.redraw_overlays()
-        self.save_boxes_json()  # autosave on each box
+        self.maybe_autosave()
 
     def on_double_click(self, event):
         if self.original_image is None:
@@ -871,7 +890,7 @@ class ImageBboxSelector:
         self.sync_current_image_record()
         self.refresh_image_list(select_path=self.current_image_path)
         self.redraw_overlays()
-        self.save_boxes_json()
+        self.maybe_autosave()
 
     def delete_selected_box_event(self, _event=None):
         if self.selected_box_index is None or not (0 <= self.selected_box_index < len(self.boxes)):
@@ -890,7 +909,7 @@ class ImageBboxSelector:
         self.sync_current_image_record()
         self.refresh_image_list(select_path=self.current_image_path)
         self.redraw_overlays()
-        self.save_boxes_json()
+        self.maybe_autosave()
 
     def save_boxes_json(self, prompt_for_path=False):
         if prompt_for_path or not self.output_json:
@@ -955,7 +974,7 @@ class ImageBboxSelector:
             self.sync_current_image_record()
             self.refresh_image_list(select_path=self.current_image_path)
             self.redraw_overlays()
-            self.save_boxes_json()
+            self.maybe_autosave()
 
     def undo_last_box_event(self, _event=None):
         if self.boxes:
@@ -965,11 +984,27 @@ class ImageBboxSelector:
             self.sync_current_image_record()
             self.refresh_image_list(select_path=self.current_image_path)
             self.redraw_overlays()
-            self.save_boxes_json()
+            self.maybe_autosave()
 
     def toggle_legend_event(self, _event=None):
         self.legend_visible = not self.legend_visible
         self.redraw_overlays()
+
+    def on_close_request(self):
+        answer = messagebox.askyesnocancel(
+            "Save Before Exit",
+            "Would you like to save the annotations to a file before closing?",
+            parent=self.root,
+        )
+
+        if answer is None:
+            return
+
+        if answer:
+            if not self.save_boxes_json(prompt_for_path=True):
+                return
+
+        self.root.destroy()
 
 
 if __name__ == "__main__":
