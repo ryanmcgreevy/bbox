@@ -37,6 +37,7 @@ class LabelEntryDialog(simpledialog.Dialog):
 
 class ImageBboxSelector:
     SUPPORTED_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tiff")
+    SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "settings.json")
 
     def __init__(
         self,
@@ -92,6 +93,9 @@ class ImageBboxSelector:
         # Settings
         self.autosave_enabled = tk.BooleanVar(value=False)
         self.last_used_label = ""
+        self.load_user_settings()
+
+        self.autosave_enabled.trace_add("write", self.on_autosave_setting_changed)
 
         # Main layout
         self.main_frame = tk.Frame(self.root)
@@ -357,6 +361,34 @@ class ImageBboxSelector:
                 "width": int(self.original_w),
                 "height": int(self.original_h)
             }
+
+    def load_user_settings(self):
+        settings_path = self.SETTINGS_FILE
+        if not os.path.exists(settings_path):
+            return
+
+        try:
+            with open(settings_path, "r", encoding="utf-8") as f:
+                settings = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return
+
+        if not isinstance(settings, dict):
+            return
+
+        self.autosave_enabled.set(bool(settings.get("autosave_enabled", False)))
+
+    def save_user_settings(self):
+        settings = {
+            "autosave_enabled": self.is_autosave_enabled(),
+        }
+
+        with open(self.SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(settings, f, indent=2)
+            f.write("\n")
+
+    def on_autosave_setting_changed(self, *_args):
+        self.save_user_settings()
 
     def is_autosave_enabled(self):
         autosave_setting = getattr(self, "autosave_enabled", True)
