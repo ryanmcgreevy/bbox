@@ -8,6 +8,7 @@ Simple Python tool for drawing **labeled bounding boxes** on images and saving/l
 - Add a text label to each box
 - Switch between loaded images using the **scrollable image list** in the sidebar
 - Save annotations for **all loaded images** to a single `.jsonl` file
+- Export the **currently displayed image** with bounding boxes and labels drawn onto it
 - Reopen a `.jsonl` file and display its saved boxes and labels
 - Store **one record per image**, with all boxes and tags for that image on a single line
 - Use keyboard shortcuts or the menu bar for common actions
@@ -69,6 +70,7 @@ python image_bbox_selector.py
 - The left sidebar shows all loaded image names and their current box counts
 - Saving writes **all currently loaded image annotations** into the chosen `.jsonl` file
 - `File -> Save JSONL to Path/URL...` lets you save annotations directly to a local path or `s3://bucket/...` destination
+- `File -> Export Annotated Image...` saves the currently displayed image at its original size with the current boxes and labels overlaid
 
 ## S3 workflow
 

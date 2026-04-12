@@ -3,7 +3,7 @@ import os
 import posixpath
 import tkinter as tk
 from tkinter import filedialog, simpledialog, messagebox, ttk
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageDraw, ImageFont
 
 try:
     import fsspec
@@ -137,6 +137,7 @@ class ImageBboxSelector:
         # Output annotation file path is chosen via a Save As dialog
         self.output_json = output_json
         self.annotation_state_snapshot = None
+        self.last_exported_image_path = None
 
         # Settings
         self.autosave_enabled = tk.BooleanVar(value=False)
@@ -992,6 +993,7 @@ class ImageBboxSelector:
         file_menu.add_separator()
         file_menu.add_command(label="Save JSONL...", command=self.save_boxes_json_event)
         file_menu.add_command(label="Save JSONL to Path/URL...", command=self.save_boxes_json_to_path_event)
+        file_menu.add_command(label="Export Annotated Image...", command=self.save_annotated_image_event)
         file_menu.add_separator()
         file_menu.add_command(label="Clear Boxes", command=self.clear_boxes_event)
         file_menu.add_separator()
@@ -1304,6 +1306,51 @@ class ImageBboxSelector:
         image_name = os.path.splitext(self.get_basename(self.image_path))[0]
         return self.join_path(image_dir, f"{image_name}_bounding_boxes.jsonl")
 
+    def get_default_annotated_image_path(self):
+        image_dir = self.get_dirname(self.image_path) or "."
+        image_name = os.path.splitext(self.get_basename(self.image_path))[0]
+        return self.join_path(image_dir, f"{image_name}_annotated.png")
+
+    @staticmethod
+    def get_image_format_from_path(path):
+        extension = os.path.splitext(str(path))[1].lower()
+        return {
+            ".jpg": "JPEG",
+            ".jpeg": "JPEG",
+            ".png": "PNG",
+            ".bmp": "BMP",
+            ".gif": "GIF",
+            ".tif": "TIFF",
+            ".tiff": "TIFF",
+        }.get(extension, "PNG")
+
+    def choose_output_annotated_image_path(self):
+        initial_path = self.get_default_annotated_image_path()
+
+        dialog_initialdir = os.path.dirname(self.SETTINGS_FILE) or "."
+        if self.image_path and not self.is_s3_path(self.image_path):
+            dialog_initialdir = self.get_dirname(self.image_path) or dialog_initialdir
+
+        dialog_initialfile = self.get_basename(initial_path) or "annotated_image.png"
+
+        selected_path = filedialog.asksaveasfilename(
+            title="Export annotated image",
+            defaultextension=".png",
+            initialdir=dialog_initialdir,
+            initialfile=dialog_initialfile,
+            filetypes=[
+                ("PNG image", "*.png"),
+                ("JPEG image", "*.jpg *.jpeg"),
+                ("Bitmap image", "*.bmp"),
+                ("TIFF image", "*.tif *.tiff"),
+                ("GIF image", "*.gif"),
+                ("All files", "*.*"),
+            ]
+        )
+        if selected_path:
+            return self.normalize_path(selected_path)
+        return None
+
     def choose_output_json_path(self):
         initial_path = self.output_json or self.get_default_output_path()
 
@@ -1486,6 +1533,73 @@ class ImageBboxSelector:
     def save_boxes_json_to_path_event(self):
         if self.choose_output_json_path_from_prompt() and self.save_boxes_json(prompt_for_path=False):
             messagebox.showinfo("Saved", f"Saved annotations for {len(self.loaded_image_order)} image(s) to {self.output_json}")
+
+    def save_annotated_image(self, output_path=None, prompt_for_path=True):
+        if self.current_image_path is None or self.original_image is None:
+            raise ValueError("No image is currently displayed.")
+
+        if prompt_for_path or not output_path:
+            output_path = self.choose_output_annotated_image_path()
+            if not output_path:
+                print("Export cancelled.")
+                return False
+
+        output_path = self.normalize_path(output_path)
+        self.sync_current_image_record()
+
+        annotated_image = self.original_image.copy()
+        image_format = self.get_image_format_from_path(output_path)
+        if image_format == "JPEG" and annotated_image.mode != "RGB":
+            annotated_image = annotated_image.convert("RGB")
+
+        draw = ImageDraw.Draw(annotated_image)
+        font = ImageFont.load_default()
+        line_width = max(2, int(round(min(self.original_w, self.original_h) / 250)))
+        text_padding = max(2, line_width)
+
+        for index, box in enumerate(self.boxes, start=1):
+            x1 = int(box["x1"])
+            y1 = int(box["y1"])
+            x2 = int(box["x2"])
+            y2 = int(box["y2"])
+            label_text = str(box.get("label", "")).strip() or f"box_{index}"
+
+            draw.rectangle([x1, y1, x2, y2], outline="red", width=line_width)
+
+            try:
+                text_bbox = draw.textbbox((0, 0), label_text, font=font)
+                text_w = text_bbox[2] - text_bbox[0]
+                text_h = text_bbox[3] - text_bbox[1]
+            except AttributeError:
+                text_w, text_h = draw.textsize(label_text, font=font)
+
+            text_x = x1 + line_width
+            text_y = max(0, y1 - text_h - (text_padding * 2) - line_width)
+
+            draw.rectangle(
+                [text_x, text_y, text_x + text_w + (text_padding * 2), text_y + text_h + (text_padding * 2)],
+                fill="red"
+            )
+            draw.text(
+                (text_x + text_padding, text_y + text_padding),
+                label_text,
+                fill="white",
+                font=font,
+            )
+
+        with self.open_path(output_path, "wb") as f:
+            annotated_image.save(f, format=image_format)
+
+        self.last_exported_image_path = output_path
+        print(f"Saved annotated image to {output_path}")
+        return True
+
+    def save_annotated_image_event(self, _event=None):
+        try:
+            if self.save_annotated_image(prompt_for_path=True):
+                messagebox.showinfo("Saved", f"Saved annotated image to {self.last_exported_image_path}")
+        except Exception as exc:
+            messagebox.showerror("Export Error", str(exc))
 
     def clear_boxes_event(self, _event=None):
         if not self.boxes:
