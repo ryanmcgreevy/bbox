@@ -1158,6 +1158,41 @@ class ImageBboxSelector:
         # Redraw boxes/labels/legend
         self.redraw_overlays()
 
+    @staticmethod
+    def clamp_int(value, minimum, maximum):
+        return max(minimum, min(maximum, int(round(value))))
+
+    def get_display_annotation_style(self):
+        min_dim = min(max(1, self.display_w), max(1, self.display_h))
+        font_size = self.clamp_int(min_dim / 18, 12, 28)
+        line_width = self.clamp_int(min_dim / 220, 2, 6)
+        text_padding = self.clamp_int(min_dim / 120, 4, 14)
+        return font_size, line_width, text_padding
+
+    def get_export_annotation_style(self):
+        min_dim = min(max(1, self.original_w), max(1, self.original_h))
+        font_size = self.clamp_int(min_dim / 18, 12, 72)
+        line_width = self.clamp_int(min_dim / 220, 2, 12)
+        text_padding = self.clamp_int(min_dim / 120, 4, 20)
+        return font_size, line_width, text_padding
+
+    @staticmethod
+    def get_text_bbox(draw, text, font):
+        try:
+            return draw.textbbox((0, 0), text, font=font)
+        except AttributeError:
+            text_w, text_h = draw.textsize(text, font=font)
+            return 0, 0, text_w, text_h
+
+    @staticmethod
+    def load_annotation_font(font_size):
+        for font_name in ("DejaVuSans-Bold.ttf", "LiberationSans-Bold.ttf", "Arial.ttf"):
+            try:
+                return ImageFont.truetype(font_name, int(font_size))
+            except OSError:
+                continue
+        return ImageFont.load_default()
+
     # -----------------------------
     # Overlay rendering
     # -----------------------------
@@ -1167,14 +1202,17 @@ class ImageBboxSelector:
         self.canvas.delete("box_label")
         self.canvas.delete("legend")
 
+        display_font_size, base_line_width, text_padding = self.get_display_annotation_style()
+
         # Draw boxes from original-space data -> display-space
         for i, b in enumerate(self.boxes, start=1):
             dx1, dy1 = self.original_to_display(b["x1"], b["y1"])
             dx2, dy2 = self.original_to_display(b["x2"], b["y2"])
             is_selected = (i - 1 == self.selected_box_index)
             outline_color = "cyan" if is_selected else "red"
-            label_color = "cyan" if is_selected else "red"
-            line_width = 3 if is_selected else 2
+            label_fill_color = "black" if is_selected else "white"
+            label_bg_color = "cyan" if is_selected else "red"
+            line_width = base_line_width + (1 if is_selected else 0)
 
             self.canvas.create_rectangle(
                 dx1, dy1, dx2, dy2,
@@ -1183,14 +1221,31 @@ class ImageBboxSelector:
 
             # Label text shown near top-left of box
             label_text = b["label"] if b["label"] else f"box_{i}"
-            self.canvas.create_text(
-                dx1 + 4, max(10, dy1 - 8),
+            text_x = dx1 + text_padding
+            text_y = max(2, dy1 - display_font_size - (text_padding * 2))
+            text_id = self.canvas.create_text(
+                text_x + text_padding,
+                text_y + text_padding,
                 text=label_text,
-                fill=label_color,
-                anchor="w",
-                font=("Arial", 14, "bold"),
+                fill=label_fill_color,
+                anchor="nw",
+                font=("Arial", display_font_size, "bold"),
                 tags="box_label"
             )
+
+            text_bbox = self.canvas.bbox(text_id)
+            if text_bbox:
+                x1, y1, x2, y2 = text_bbox
+                bg_id = self.canvas.create_rectangle(
+                    x1 - text_padding,
+                    y1 - max(2, text_padding // 2),
+                    x2 + text_padding,
+                    y2 + max(2, text_padding // 2),
+                    fill=label_bg_color,
+                    outline=label_bg_color,
+                    tags="box_label"
+                )
+                self.canvas.tag_raise(text_id, bg_id)
 
         if self.legend_visible:
             self.draw_legend()
@@ -1553,9 +1608,8 @@ class ImageBboxSelector:
             annotated_image = annotated_image.convert("RGB")
 
         draw = ImageDraw.Draw(annotated_image)
-        font = ImageFont.load_default()
-        line_width = max(2, int(round(min(self.original_w, self.original_h) / 250)))
-        text_padding = max(2, line_width)
+        export_font_size, line_width, text_padding = self.get_export_annotation_style()
+        font = self.load_annotation_font(export_font_size)
 
         for index, box in enumerate(self.boxes, start=1):
             x1 = int(box["x1"])
@@ -1566,12 +1620,9 @@ class ImageBboxSelector:
 
             draw.rectangle([x1, y1, x2, y2], outline="red", width=line_width)
 
-            try:
-                text_bbox = draw.textbbox((0, 0), label_text, font=font)
-                text_w = text_bbox[2] - text_bbox[0]
-                text_h = text_bbox[3] - text_bbox[1]
-            except AttributeError:
-                text_w, text_h = draw.textsize(label_text, font=font)
+            text_bbox = self.get_text_bbox(draw, label_text, font)
+            text_w = text_bbox[2] - text_bbox[0]
+            text_h = text_bbox[3] - text_bbox[1]
 
             text_x = x1 + line_width
             text_y = max(0, y1 - text_h - (text_padding * 2) - line_width)

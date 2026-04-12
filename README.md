@@ -1,6 +1,13 @@
-# bbox
+<div align="center">
+  <h1>
+    <img src="images/beebox.png" alt="bbox logo" width="64" style="vertical-align: middle; margin-right: 12px;" />
+    <span style="vertical-align: middle;">bbox</span>
+  </h1>
+</div>
 
-Simple Python tool for drawing **labeled bounding boxes** on images and saving/loading them as **JSON Lines (`.jsonl`)** annotation files.
+<p align="center">
+  Simple Python tool for drawing <strong>labeled bounding boxes</strong> on images and saving/loading them as <strong>JSON Lines (<code>.jsonl</code>)</strong> annotation files.
+</p>
 
 ## Features
 
@@ -18,7 +25,7 @@ Simple Python tool for drawing **labeled bounding boxes** on images and saving/l
 - Python 3
 - `Pillow`
 - `tkinter` (usually included with Python)
-- Optional for S3 paths: `s3fs` and `fsspec`
+- **Optional** for S3 paths: `s3fs` and `fsspec`
 
 ## Install
 
@@ -61,6 +68,20 @@ python image_bbox_selector.py
 - `Ctrl+Z` or `U` — undo last box
 - `H` — hide/show legend
 
+## Examples
+
+<div align="center">
+  <p><strong>Program interface</strong></p>
+  <img src="images/bbox-ss.png" alt="bbox application screenshot" width="720" style="max-width: 100%; border-radius: 8px;" />
+</div>
+
+<br />
+
+<div align="center">
+  <p><strong>Example exported annotated image</strong></p>
+  <img src="images/example_annotated.png" alt="example annotated image output" width="720" style="max-width: 100%; border-radius: 8px;" />
+</div>
+
 ## Multi-image workflow
 
 - `File -> Open Image(s)...` lets you select multiple image files at once
@@ -87,6 +108,7 @@ s3://my-bucket/annotations/deer_boxes.jsonl
 
 Notes:
 
+- S3 usage is entirely **optional** and all file I/O can be done locally
 - S3 loading/saving uses `s3fs`/`fsspec`
 - AWS credentials must already be available in your environment
 - If you cancel the startup file picker, the app will prompt for a local path or S3 URL
