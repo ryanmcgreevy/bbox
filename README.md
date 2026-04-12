@@ -1,6 +1,6 @@
 <div align="center">
   <h1>
-    <img src="images/beebox.png" alt="bbox logo" width="64" style="vertical-align: middle; margin-right: 12px;" />
+    <img src="images/beebox.png" alt="bbox logo" width="128" style="vertical-align: middle; margin-right: 12px;" />
     <span style="vertical-align: middle;">bbox</span>
   </h1>
 </div>
