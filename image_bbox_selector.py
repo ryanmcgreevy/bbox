@@ -58,7 +58,7 @@ class ImageBboxSelector:
         self.root.title("Image BBox Selector")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close_request)
 
-        # Loaded image records keyed by absolute image path
+        # Loaded image records keyed by image path; full image data is cached lazily
         self.loaded_images = {}
         self.loaded_image_order = []
         self.current_image_path = None
@@ -398,6 +398,17 @@ class ImageBboxSelector:
         return open(path, mode, **open_kwargs)
 
     @classmethod
+    def get_image_size(cls, image_path):
+        image_path = cls.normalize_path(image_path)
+        if cls.is_s3_path(image_path):
+            with cls.open_path(image_path, "rb") as image_file:
+                with Image.open(image_file) as image:
+                    return image.size
+
+        with Image.open(image_path) as image:
+            return image.size
+
+    @classmethod
     def load_image_copy(cls, image_path):
         image_path = cls.normalize_path(image_path)
         if cls.is_s3_path(image_path):
@@ -470,19 +481,22 @@ class ImageBboxSelector:
     def is_supported_image_path(cls, image_path):
         return str(image_path).lower().endswith(cls.SUPPORTED_IMAGE_EXTENSIONS)
 
-    def create_image_record(self, image_path, boxes=None):
+    def create_image_record(self, image_path, boxes=None, image_size=None):
         image_path = self.normalize_path(image_path)
         if not self.path_exists(image_path):
             raise FileNotFoundError(f"Image not found: {image_path}")
 
-        image = self.load_image_copy(image_path)
-        width, height = image.size
-        image.close()
+        normalized_size = image_size or {}
+        width = normalized_size.get("width")
+        height = normalized_size.get("height")
+        if width is None or height is None:
+            width, height = self.get_image_size(image_path)
 
         return {
             "image": image_path,
-            "image_size": {"width": width, "height": height},
-            "boxes": [self.validate_box(box) for box in (boxes or [])]
+            "image_size": {"width": int(width), "height": int(height)},
+            "boxes": [self.validate_box(box) for box in (boxes or [])],
+            "_cached_image": None,
         }
 
     def get_all_existing_labels(self):
@@ -656,14 +670,12 @@ class ImageBboxSelector:
 
         for record in image_records:
             image_path = self.normalize_image_path(record.get("image"))
-            normalized_record = self.create_image_record(image_path, boxes=record.get("boxes", []))
-
             image_size = record.get("image_size") or {}
-            if "width" in image_size and "height" in image_size:
-                normalized_record["image_size"] = {
-                    "width": int(image_size["width"]),
-                    "height": int(image_size["height"])
-                }
+            normalized_record = self.create_image_record(
+                image_path,
+                boxes=record.get("boxes", []),
+                image_size=image_size,
+            )
 
             replaced = False
             for index, existing_record in enumerate(normalized_records):
@@ -790,7 +802,17 @@ class ImageBboxSelector:
 
         self.sync_current_image_record()
 
-        self.original_image = self.load_image_copy(image_path)
+        record = self.loaded_images[image_path]
+        cached_image = record.get("_cached_image")
+        if cached_image is None:
+            cached_image = self.load_image_copy(image_path)
+            record["_cached_image"] = cached_image
+            record["image_size"] = {
+                "width": int(cached_image.size[0]),
+                "height": int(cached_image.size[1]),
+            }
+
+        self.original_image = cached_image
 
         self.current_image_path = image_path
         self.image_path = image_path
@@ -1172,13 +1194,15 @@ class ImageBboxSelector:
             if not cls.path_exists(image_path):
                 raise FileNotFoundError(f"Image not found: {image_path}")
 
-            image = cls.load_image_copy(image_path)
-            width, height = image.size
-            image.close()
+            image_size = record.get("image_size") or {}
+            width = image_size.get("width")
+            height = image_size.get("height")
+            if width is None or height is None:
+                width, height = cls.get_image_size(image_path)
 
             image_records.append({
                 "image": image_path,
-                "image_size": {"width": width, "height": height},
+                "image_size": {"width": int(width), "height": int(height)},
                 "boxes": [cls.validate_box(box) for box in record.get("boxes", [])]
             })
             image_paths.append(image_path)
