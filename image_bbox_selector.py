@@ -41,6 +41,46 @@ class LabelEntryDialog(simpledialog.Dialog):
         self.result = self.label_var.get().strip()
 
 
+class ImageSelectionDialog(simpledialog.Dialog):
+    def __init__(self, parent, title, image_paths, intro_text="Multiple images are loaded."):
+        self.image_paths = list(image_paths or [])
+        self.intro_text = intro_text
+        self.result = None
+        super().__init__(parent, title)
+
+    def body(self, master):
+        tk.Label(master, text=self.intro_text, anchor="w", justify="left").pack(fill=tk.X, pady=(0, 6))
+        tk.Label(master, text="Select the image to display first:", anchor="w").pack(fill=tk.X, pady=(0, 4))
+
+        list_frame = tk.Frame(master)
+        list_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.listbox = tk.Listbox(list_frame, exportselection=False, height=min(max(len(self.image_paths), 6), 16), width=60)
+        self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        scrollbar = tk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.listbox.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.listbox.config(yscrollcommand=scrollbar.set)
+
+        for index, image_path in enumerate(self.image_paths, start=1):
+            self.listbox.insert(tk.END, f"{index}: {ImageBboxSelector.get_basename(image_path)}")
+
+        if self.image_paths:
+            self.listbox.selection_set(0)
+            self.listbox.see(0)
+        self.listbox.bind("<Double-Button-1>", self._on_double_click)
+        self.listbox.focus_set()
+        return self.listbox
+
+    def _on_double_click(self, _event=None):
+        self.ok()
+
+    def apply(self):
+        selection = self.listbox.curselection()
+        if selection:
+            self.result = self.image_paths[selection[0]]
+
+
 class ImageBboxSelector:
     SUPPORTED_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tiff")
     SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "settings.json")
@@ -605,20 +645,15 @@ class ImageBboxSelector:
         if len(image_paths) == 1:
             return image_paths[0]
 
-        prompt_lines = [intro_text, "Enter the number to display:", ""]
-        for index, image_path in enumerate(image_paths, start=1):
-            prompt_lines.append(f"{index}: {ImageBboxSelector.get_basename(image_path)}")
-
-        selected_index = simpledialog.askinteger(
+        dialog = ImageSelectionDialog(
+            parent,
             prompt_title,
-            "\n".join(prompt_lines[:30]),
-            minvalue=1,
-            maxvalue=len(image_paths),
-            parent=parent
+            image_paths,
+            intro_text=intro_text,
         )
-        if selected_index is None:
+        if dialog.result is None:
             return image_paths[0]
-        return image_paths[selected_index - 1]
+        return dialog.result
 
     def sync_current_image_record(self):
         if self.current_image_path and self.current_image_path in self.loaded_images:
