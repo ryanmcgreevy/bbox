@@ -25,7 +25,7 @@
 - Python 3
 - `Pillow`
 - `tkinter` (usually included with Python)
-- **Optional** for S3 paths: `s3fs` and `fsspec`
+- ****Optional**** for S3 paths: `s3fs` and `fsspec`
 
 ## Install
 
@@ -72,14 +72,14 @@ python image_bbox_selector.py
 
 <div align="center">
   <p><strong>Program interface</strong></p>
-  <img src="images/bbox-ss.png" alt="bbox application screenshot" width="720" style="max-width: 100%; border-radius: 8px;" />
+  <img src="images/bbox-ss.jpg" alt="bbox application screenshot" width="720" style="max-width: 100%; border-radius: 8px;" />
 </div>
 
 <br />
 
 <div align="center">
   <p><strong>Example exported annotated image</strong></p>
-  <img src="images/example_annotated.png" alt="example annotated image output" width="720" style="max-width: 100%; border-radius: 8px;" />
+  <img src="images/example_annotated.jpg" alt="example annotated image output" width="720" style="max-width: 100%; border-radius: 8px;" />
 </div>
 
 ## Multi-image workflow
@@ -108,6 +108,7 @@ s3://my-bucket/annotations/deer_boxes.jsonl
 
 Notes:
 
+- S3 usage is entirely **optional** and all file I/O can be done locally
 - S3 usage is entirely **optional** and all file I/O can be done locally
 - S3 loading/saving uses `s3fs`/`fsspec`
 - AWS credentials must already be available in your environment
