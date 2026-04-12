@@ -74,6 +74,7 @@ class ImageBboxSelector:
         self.tk_image = None
         self.display_w = 800
         self.display_h = 600
+        self.window_size_initialized = False
 
         # Bounding boxes are stored in ORIGINAL image coordinates
         self.boxes = []
@@ -831,8 +832,11 @@ class ImageBboxSelector:
 
         self.refresh_image_list(select_path=image_path)
         self.refresh_label_list(select_index=None)
-        self.set_initial_window_size()
-        self.root.update_idletasks()
+        if not self.window_size_initialized:
+            self.set_initial_window_size()
+            self.window_size_initialized = True
+        else:
+            self.root.update_idletasks()
         self.update_canvas_image()
         self.redraw_overlays()
 
