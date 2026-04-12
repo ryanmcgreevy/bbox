@@ -96,6 +96,7 @@ class ImageBboxSelector:
 
         # Output annotation file path is chosen via a Save As dialog
         self.output_json = output_json
+        self.annotation_state_snapshot = None
 
         # Settings
         self.autosave_enabled = tk.BooleanVar(value=False)
@@ -627,6 +628,33 @@ class ImageBboxSelector:
                 "height": int(self.original_h)
             }
 
+    def snapshot_annotation_state(self):
+        self.sync_current_image_record()
+
+        snapshot = []
+        for image_path in self.loaded_image_order:
+            record = self.loaded_images.get(image_path, {})
+            image_size = record.get("image_size") or {}
+            snapshot.append({
+                "image": self.normalize_path(image_path),
+                "image_size": {
+                    "width": int(image_size.get("width", 0)),
+                    "height": int(image_size.get("height", 0)),
+                },
+                "boxes": [self.validate_box(box) for box in record.get("boxes", [])],
+            })
+
+        return json.dumps(snapshot, ensure_ascii=False, sort_keys=True)
+
+    def mark_annotation_state_saved(self):
+        self.annotation_state_snapshot = self.snapshot_annotation_state()
+
+    def has_unsaved_annotation_changes(self):
+        if self.annotation_state_snapshot is None:
+            self.mark_annotation_state_saved()
+            return False
+        return self.snapshot_annotation_state() != self.annotation_state_snapshot
+
     def load_user_settings(self):
         settings_path = self.SETTINGS_FILE
         if not os.path.exists(settings_path):
@@ -710,6 +738,7 @@ class ImageBboxSelector:
                 selected_image_path = self.loaded_image_order[0]
 
         self.display_image_path(selected_image_path)
+        self.mark_annotation_state_saved()
 
     def set_loaded_image_paths(self, image_paths, output_json=None, prompt_selection=False):
         unique_paths = []
@@ -1412,6 +1441,7 @@ class ImageBboxSelector:
                 f.write("\n")
 
         print(f"Saved annotations for {len(self.loaded_image_order)} image(s) to {self.output_json}")
+        self.mark_annotation_state_saved()
         return True
 
     def save_boxes_json_event(self, _event=None):
@@ -1451,6 +1481,10 @@ class ImageBboxSelector:
         self.redraw_overlays()
 
     def on_close_request(self):
+        if not self.has_unsaved_annotation_changes():
+            self.root.destroy()
+            return
+
         answer = messagebox.askyesnocancel(
             "Save Before Exit",
             "Would you like to save the annotations to a file before closing?",
