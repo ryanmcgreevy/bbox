@@ -253,7 +253,7 @@ class ImageBboxSelector:
                 prompt_selection=False,
             )
         else:
-            raise ValueError("An image path or annotation records are required to start the selector.")
+            self.initialize_empty_state()
 
         self.root.mainloop()
 
@@ -279,6 +279,44 @@ class ImageBboxSelector:
         dx = int(round(x * scale_x))
         dy = int(round(y * scale_y))
         return dx, dy
+
+    def initialize_empty_state(self):
+        self.root.update_idletasks()
+
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        window_w = min(max(960, int(screen_w * 0.8)), max(640, screen_w - 40))
+        window_h = min(max(700, int(screen_h * 0.8)), max(480, screen_h - 60))
+
+        canvas_w = max(500, window_w - 320)
+        canvas_h = max(360, window_h - 80)
+        self.canvas.config(width=canvas_w, height=canvas_h)
+
+        x = max((screen_w - int(window_w)) // 2, 0)
+        y = max((screen_h - int(window_h)) // 2, 0)
+        self.root.geometry(f"{int(window_w)}x{int(window_h)}+{x}+{y}")
+        self.window_size_initialized = True
+        self.root.update_idletasks()
+        self.show_empty_canvas_message()
+        self.mark_annotation_state_saved()
+
+    def show_empty_canvas_message(self):
+        self.canvas.delete("placeholder")
+        self.canvas.itemconfig("image", image="")
+        self.canvas.coords("image", 0, 0)
+
+        canvas_w = max(1, self.canvas.winfo_width())
+        canvas_h = max(1, self.canvas.winfo_height())
+        self.canvas.create_text(
+            canvas_w // 2,
+            canvas_h // 2,
+            text="No image loaded.\nUse the File menu to open image(s), a folder, or a JSONL file.",
+            fill="white",
+            anchor="center",
+            justify="center",
+            font=("Arial", 16, "bold"),
+            tags="placeholder",
+        )
 
     @staticmethod
     def normalize_box(x1, y1, x2, y2):
@@ -932,6 +970,7 @@ class ImageBboxSelector:
             self.display_image = self.original_image.resize((self.display_w, self.display_h), Image.Resampling.LANCZOS)
 
         self.tk_image = ImageTk.PhotoImage(self.display_image)
+        self.canvas.delete("placeholder")
         self.canvas.itemconfig("image", image=self.tk_image)
         self.canvas.coords("image", 0, 0)
 
@@ -1146,7 +1185,11 @@ class ImageBboxSelector:
             self.edit_selected_box_label_event()
 
     def on_window_resize(self, event):
-        if event.widget is not self.canvas or self.original_image is None:
+        if event.widget is not self.canvas:
+            return
+
+        if self.original_image is None:
+            self.show_empty_canvas_message()
             return
 
         # Avoid invalid tiny sizes
@@ -1531,6 +1574,9 @@ class ImageBboxSelector:
         self.maybe_autosave()
 
     def save_boxes_json(self, prompt_for_path=False):
+        if not self.loaded_image_order:
+            raise ValueError("No images are loaded. Open an image or folder before saving annotations.")
+
         if prompt_for_path or not self.output_json:
             if not self.choose_output_json_path():
                 print("Save cancelled.")
@@ -1582,12 +1628,18 @@ class ImageBboxSelector:
         return True
 
     def save_boxes_json_event(self, _event=None):
-        if self.save_boxes_json(prompt_for_path=True):
-            messagebox.showinfo("Saved", f"Saved annotations for {len(self.loaded_image_order)} image(s) to {self.output_json}")
+        try:
+            if self.save_boxes_json(prompt_for_path=True):
+                messagebox.showinfo("Saved", f"Saved annotations for {len(self.loaded_image_order)} image(s) to {self.output_json}")
+        except Exception as exc:
+            messagebox.showerror("Save Error", str(exc))
 
     def save_boxes_json_to_path_event(self):
-        if self.choose_output_json_path_from_prompt() and self.save_boxes_json(prompt_for_path=False):
-            messagebox.showinfo("Saved", f"Saved annotations for {len(self.loaded_image_order)} image(s) to {self.output_json}")
+        try:
+            if self.choose_output_json_path_from_prompt() and self.save_boxes_json(prompt_for_path=False):
+                messagebox.showinfo("Saved", f"Saved annotations for {len(self.loaded_image_order)} image(s) to {self.output_json}")
+        except Exception as exc:
+            messagebox.showerror("Save Error", str(exc))
 
     def save_annotated_image(self, output_path=None, prompt_for_path=True):
         if self.current_image_path is None or self.original_image is None:
@@ -1702,50 +1754,7 @@ class ImageBboxSelector:
 
 
 if __name__ == "__main__":
-    # Hide root during file picker to avoid odd UX flash
-    picker_root = tk.Tk()
-    picker_root.withdraw()
-    selected_paths = filedialog.askopenfilenames(
-        title="Select image file(s) or a JSONL annotation file",
-        filetypes=[
-            ("Supported files", "*.png *.jpg *.jpeg *.bmp *.gif *.tiff *.jsonl"),
-            ("JSON Lines files", "*.jsonl"),
-            ("Image files", "*.png *.jpg *.jpeg *.bmp *.gif *.tiff"),
-            ("All files", "*.*")
-        ]
-    )
-
-    entered_paths = []
-    if not selected_paths:
-        entered_paths = ImageBboxSelector.prompt_for_startup_paths(parent=picker_root)
-
-    picker_root.destroy()
-
     try:
-        if selected_paths:
-            if len(selected_paths) == 1 and selected_paths[0].lower().endswith(".jsonl"):
-                json_path = ImageBboxSelector.normalize_path(selected_paths[0])
-                image_records, selected_image_path = ImageBboxSelector.read_annotation_file(json_path)
-                ImageBboxSelector(
-                    output_json=json_path,
-                    image_records=image_records,
-                    selected_image_path=selected_image_path,
-                )
-            else:
-                image_paths = [path for path in selected_paths if ImageBboxSelector.is_supported_image_path(path)]
-                if image_paths:
-                    ImageBboxSelector(image_paths=image_paths)
-        elif entered_paths:
-            resolved_paths, is_jsonl = ImageBboxSelector.expand_input_paths(entered_paths)
-            if is_jsonl:
-                json_path = resolved_paths[0]
-                image_records, selected_image_path = ImageBboxSelector.read_annotation_file(json_path)
-                ImageBboxSelector(
-                    output_json=json_path,
-                    image_records=image_records,
-                    selected_image_path=selected_image_path,
-                )
-            elif resolved_paths:
-                ImageBboxSelector(image_paths=resolved_paths)
+        ImageBboxSelector()
     except Exception as exc:
-        messagebox.showerror("Load Error", str(exc))
+        messagebox.showerror("Startup Error", str(exc))
