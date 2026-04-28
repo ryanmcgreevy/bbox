@@ -7,12 +7,12 @@ from PIL import Image, ImageDraw, ImageFont
 from PyQt6.QtCore import Qt, QRect
 from PyQt6.QtGui import (
     QAction, QBrush, QColor, QFont, QFontMetrics, QImage,
-    QKeySequence, QPainter, QPen, QPixmap,
+    QKeySequence, QPainter, QPen, QPixmap, QShortcut,
 )
 from PyQt6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
     QFrame, QHBoxLayout, QInputDialog, QLabel, QListWidget, QMainWindow,
-    QMessageBox, QShortcut, QSizePolicy, QVBoxLayout, QWidget,
+    QMessageBox, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 try:
