@@ -2,6 +2,7 @@ import json
 import os
 import posixpath
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import filedialog, simpledialog, messagebox, ttk
 from PIL import Image, ImageTk, ImageDraw, ImageFont
 
@@ -12,6 +13,7 @@ except ImportError:
 
 
 class LabelEntryDialog(simpledialog.Dialog):
+    """Dialog for entering or selecting a label from existing labels."""
     def __init__(self, parent, title, prompt_text, existing_labels=None, initialvalue=""):
         self.prompt_text = prompt_text
         self.existing_labels = list(existing_labels or [])
@@ -20,7 +22,9 @@ class LabelEntryDialog(simpledialog.Dialog):
         super().__init__(parent, title)
 
     def body(self, master):
-        tk.Label(master, text=self.prompt_text, anchor="w", justify="left").grid(row=0, column=0, sticky="w", pady=(0, 6))
+        tk.Label(master, text=self.prompt_text, 
+                 anchor="w", justify="left").grid(row=0, column=0, sticky="w", 
+                                                  pady=(0, 6))
 
         self.label_var = tk.StringVar(value=self.initialvalue)
         self.label_combobox = ttk.Combobox(
@@ -42,6 +46,7 @@ class LabelEntryDialog(simpledialog.Dialog):
 
 
 class ImageSelectionDialog(simpledialog.Dialog):
+    """Dialog for selecting which loaded image should be displayed first."""
     def __init__(self, parent, title, image_paths, intro_text="Multiple images are loaded."):
         self.image_paths = list(image_paths or [])
         self.intro_text = intro_text
@@ -81,7 +86,9 @@ class ImageSelectionDialog(simpledialog.Dialog):
             self.result = self.image_paths[selection[0]]
 
 
-class ImageBboxSelector:
+class ImageBboxSelector:  # pylint: disable=too-many-instance-attributes,too-many-public-methods
+    """Tkinter-based bounding-box annotation tool for loading, editing, 
+    and exporting image annotations."""
     SUPPORTED_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tiff")
     SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "settings.json")
 
@@ -172,7 +179,8 @@ class ImageBboxSelector:
         self.image_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.image_listbox.bind("<<ListboxSelect>>", self.on_image_list_select)
 
-        self.image_list_scrollbar = tk.Scrollbar(self.image_list_frame, orient=tk.VERTICAL, command=self.image_listbox.yview)
+        self.image_list_scrollbar = tk.Scrollbar(self.image_list_frame, orient=tk.VERTICAL, 
+                                                 command=self.image_listbox.yview)
         self.image_list_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.image_listbox.config(yscrollcommand=self.image_list_scrollbar.set)
 
@@ -194,7 +202,8 @@ class ImageBboxSelector:
         self.label_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.label_listbox.bind("<<ListboxSelect>>", self.on_label_list_select)
 
-        self.label_list_scrollbar = tk.Scrollbar(self.label_list_frame, orient=tk.VERTICAL, command=self.label_listbox.yview)
+        self.label_list_scrollbar = tk.Scrollbar(self.label_list_frame, orient=tk.VERTICAL, 
+                                                 command=self.label_listbox.yview)
         self.label_list_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.label_listbox.config(yscrollcommand=self.label_list_scrollbar.set)
 
@@ -202,7 +211,8 @@ class ImageBboxSelector:
         self.canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=8, pady=8)
 
         # Canvas
-        self.canvas = tk.Canvas(self.canvas_frame, width=self.display_w, height=self.display_h, bg="black")
+        self.canvas = tk.Canvas(self.canvas_frame, width=self.display_w, 
+                                height=self.display_h, bg="black")
         self.canvas.pack(fill=tk.BOTH, expand=True)
 
         # Draw image container
@@ -338,6 +348,51 @@ class ImageBboxSelector:
         for index in range(len(self.boxes) - 1, -1, -1):
             if self.point_in_box(x, y, self.boxes[index], padding=4):
                 return index
+        return None
+
+    def get_label_display_bbox(self, index):
+        if not (0 <= index < len(self.boxes)):
+            return None
+
+        display_font_size, _, text_padding = self.get_display_annotation_style()
+        box = self.boxes[index]
+        dx1, dy1 = self.original_to_display(box["x1"], box["y1"])
+        label_text = box["label"] if box["label"] else f"box_{index + 1}"
+
+        text_x = dx1 + text_padding
+        text_y = max(2, dy1 - display_font_size - (text_padding * 2))
+
+        label_font = tkfont.Font(family="Arial", size=display_font_size, weight="bold")
+        text_w = label_font.measure(label_text)
+        text_h = label_font.metrics("linespace")
+
+        vertical_pad = max(2, text_padding // 2)
+        return (
+            text_x,
+            text_y + text_padding - vertical_pad,
+            text_x + text_w + (text_padding * 2),
+            text_y + text_padding + text_h + vertical_pad,
+        )
+
+    @staticmethod
+    def point_in_display_rect(x, y, rect):
+        if rect is None:
+            return False
+        x1, y1, x2, y2 = rect
+        return x1 <= x <= x2 and y1 <= y <= y2
+
+    def find_box_or_label_at_display_point(self, x, y):
+        for index in range(len(self.boxes) - 1, -1, -1):
+            label_bbox = self.get_label_display_bbox(index)
+            if self.point_in_display_rect(x, y, label_bbox):
+                return index
+
+            box = self.boxes[index]
+            dx1, dy1 = self.original_to_display(box["x1"], box["y1"])
+            dx2, dy2 = self.original_to_display(box["x2"], box["y2"])
+            if self.point_in_display_rect(x, y, self.normalize_box(dx1, dy1, dx2, dy2)):
+                return index
+
         return None
 
     def move_box(self, box, delta_x, delta_y):
@@ -1057,8 +1112,8 @@ class ImageBboxSelector:
         if self.original_image is None:
             return
 
+        hit_index = self.find_box_or_label_at_display_point(event.x, event.y)
         click_ox, click_oy = self.display_to_original(event.x, event.y)
-        hit_index = self.find_box_at_original_point(click_ox, click_oy)
 
         self.drag_mode = None
         self.box_was_moved = False
@@ -1176,8 +1231,7 @@ class ImageBboxSelector:
         if self.original_image is None:
             return
 
-        click_ox, click_oy = self.display_to_original(event.x, event.y)
-        hit_index = self.find_box_at_original_point(click_ox, click_oy)
+        hit_index = self.find_box_or_label_at_display_point(event.x, event.y)
         if hit_index is not None:
             self.selected_box_index = hit_index
             self.refresh_label_list(select_index=hit_index)
