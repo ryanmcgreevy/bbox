@@ -244,7 +244,7 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
         selected_image_path=None,
         image_paths=None,
     ):
-        app = QApplication.instance() or QApplication(sys.argv)
+        self._app = QApplication.instance() or QApplication(sys.argv)
         super().__init__()
         self.setWindowTitle("Image BBox Selector")
 
@@ -357,7 +357,7 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
         else:
             self.initialize_empty_state()
 
-        app.exec()
+        self._app.exec()
 
     # -----------------------------
     # Coordinate conversion helpers
@@ -819,8 +819,8 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
             image_paths,
             intro_text=intro_text,
         )
-        dialog.exec()
-        if dialog.result is None:
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        if not accepted or dialog.result is None:
             return image_paths[0]
         return dialog.result
 
@@ -1413,9 +1413,6 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
     # -----------------------------
     # Overlay rendering
     # -----------------------------
-    # -----------------------------
-    # Overlay rendering
-    # -----------------------------
     def redraw_overlays(self):
         """Trigger a repaint of the canvas widget."""
         self.canvas.update()
@@ -1456,6 +1453,7 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
         """Alias kept for API compatibility; triggers a full canvas repaint."""
         self.redraw_overlays()
 
+    # -----------------------------
     # Actions
     # -----------------------------
     @classmethod
@@ -1552,9 +1550,6 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
             ".tiff": "TIFF",
         }.get(extension, "PNG")
 
-    # -----------------------------
-    # Actions
-    # -----------------------------
     def choose_output_annotated_image_path(self):
         initial_path = self.get_default_annotated_image_path()
 
