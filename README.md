@@ -24,24 +24,19 @@
 
 - Python 3
 - `Pillow`
-- `tkinter` (usually included with Python)
+- `PyQt6`
 - ****Optional**** for S3 paths: `s3fs` and `fsspec`
 
 ## Install
 
 ```bash
-pip install pillow
+pip install pillow PyQt6
 ```
 
 For S3 support:
 
 ```bash
 pip install s3fs fsspec
-```
-
-You may need to install python with tk support:
-```bash
-sudo apt-get install python3-tk
 ```
 
 ## Run
@@ -66,6 +61,8 @@ python image_bbox_selector.py
 - `L` — load JSONL
 - `C` — clear all boxes
 - `Ctrl+Z` or `U` — undo last box
+- `E` — edit selected box label
+- `Delete`, `Backspace`, or `D` — delete selected box
 - `H` — hide/show legend
 
 ## Examples
