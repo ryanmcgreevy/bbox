@@ -168,11 +168,11 @@ class BBoxCanvas(QWidget):
 
             painter.setPen(QPen(outline_color, lw))
             painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
-            painter.drawRect(dx1, dy1, dx2 - dx1, dy2 - dy1)
+            painter.drawRect(int(dx1), int(dy1), int(dx2 - dx1), int(dy2 - dy1))
 
             label_text = b["label"] if b["label"] else f"box_{i + 1}"
-            text_x = dx1 + text_padding
-            text_y = max(2, dy1 - font_size - text_padding * 2)
+            text_x = int(dx1) + text_padding
+            text_y = max(2, int(dy1) - font_size - text_padding * 2)
 
             text_w = metrics.horizontalAdvance(label_text)
             text_h = metrics.height()
@@ -196,7 +196,7 @@ class BBoxCanvas(QWidget):
             x1, y1, x2, y2 = self._temp_rect
             painter.setPen(QPen(QColor("red"), 2))
             painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
-            painter.drawRect(min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1))
+            painter.drawRect(int(min(x1, x2)), int(min(y1, y2)), int(abs(x2 - x1)), int(abs(y2 - y1)))
 
         if sel.legend_visible:
             sel._draw_legend_qt(painter)
