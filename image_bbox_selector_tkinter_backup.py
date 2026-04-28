@@ -1,19 +1,10 @@
 import json
 import os
 import posixpath
-import sys
-from PIL import Image, ImageDraw, ImageFont
-
-from PyQt6.QtCore import Qt, QRect
-from PyQt6.QtGui import (
-    QAction, QBrush, QColor, QFont, QFontMetrics, QImage,
-    QKeySequence, QPainter, QPen, QPixmap, QShortcut,
-)
-from PyQt6.QtWidgets import (
-    QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
-    QFrame, QHBoxLayout, QInputDialog, QLabel, QListWidget, QMainWindow,
-    QMessageBox, QSizePolicy, QVBoxLayout, QWidget,
-)
+import tkinter as tk
+import tkinter.font as tkfont
+from tkinter import filedialog, simpledialog, messagebox, ttk
+from PIL import Image, ImageTk, ImageDraw, ImageFont
 
 try:
     import fsspec
@@ -21,217 +12,83 @@ except ImportError:
     fsspec = None
 
 
-
-class LabelEntryDialog(QDialog):
+class LabelEntryDialog(simpledialog.Dialog):
     """Dialog for entering or selecting a label from existing labels."""
-
     def __init__(self, parent, title, prompt_text, existing_labels=None, initialvalue=""):
-        super().__init__(parent)
-        self.setWindowTitle(title)
-        self.result = None
+        self.prompt_text = prompt_text
         self.existing_labels = list(existing_labels or [])
-
-        layout = QVBoxLayout(self)
-
-        prompt_label = QLabel(prompt_text)
-        prompt_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        layout.addWidget(prompt_label)
-
-        self.combobox = QComboBox()
-        self.combobox.setEditable(True)
-        self.combobox.addItems(self.existing_labels)
-        self.combobox.setCurrentText(initialvalue)
-        self.combobox.setMinimumWidth(300)
-        layout.addWidget(self.combobox)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self._on_accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-        self.combobox.setFocus()
-        if self.combobox.lineEdit():
-            self.combobox.lineEdit().selectAll()
-
-    def _on_accept(self):
-        self.result = self.combobox.currentText().strip()
-        self.accept()
-
-
-class ImageSelectionDialog(QDialog):
-    """Dialog for selecting which loaded image should be displayed first."""
-
-    def __init__(self, parent, title, image_paths, intro_text="Multiple images are loaded."):
-        super().__init__(parent)
-        self.setWindowTitle(title)
-        self.image_paths = list(image_paths or [])
+        self.initialvalue = initialvalue
         self.result = None
+        super().__init__(parent, title)
 
-        layout = QVBoxLayout(self)
+    def body(self, master):
+        tk.Label(master, text=self.prompt_text, 
+                 anchor="w", justify="left").grid(row=0, column=0, sticky="w", 
+                                                  pady=(0, 6))
 
-        layout.addWidget(QLabel(intro_text))
-        layout.addWidget(QLabel("Select the image to display first:"))
+        self.label_var = tk.StringVar(value=self.initialvalue)
+        self.label_combobox = ttk.Combobox(
+            master,
+            textvariable=self.label_var,
+            values=self.existing_labels,
+            state="normal",
+            width=40,
+        )
+        self.label_combobox.grid(row=1, column=0, sticky="ew")
+        master.grid_columnconfigure(0, weight=1)
 
-        self.listbox = QListWidget()
-        height = min(max(len(self.image_paths), 6), 16)
-        self.listbox.setMinimumHeight(height * 22)
-        self.listbox.setMinimumWidth(400)
+        self.label_combobox.focus_set()
+        self.label_combobox.selection_range(0, tk.END)
+        return self.label_combobox
+
+    def apply(self):
+        self.result = self.label_var.get().strip()
+
+
+class ImageSelectionDialog(simpledialog.Dialog):
+    """Dialog for selecting which loaded image should be displayed first."""
+    def __init__(self, parent, title, image_paths, intro_text="Multiple images are loaded."):
+        self.image_paths = list(image_paths or [])
+        self.intro_text = intro_text
+        self.result = None
+        super().__init__(parent, title)
+
+    def body(self, master):
+        tk.Label(master, text=self.intro_text, anchor="w", justify="left").pack(fill=tk.X, pady=(0, 6))
+        tk.Label(master, text="Select the image to display first:", anchor="w").pack(fill=tk.X, pady=(0, 4))
+
+        list_frame = tk.Frame(master)
+        list_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.listbox = tk.Listbox(list_frame, exportselection=False, height=min(max(len(self.image_paths), 6), 16), width=60)
+        self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        scrollbar = tk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.listbox.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.listbox.config(yscrollcommand=scrollbar.set)
 
         for index, image_path in enumerate(self.image_paths, start=1):
-            self.listbox.addItem(f"{index}: {ImageBboxSelector.get_basename(image_path)}")
+            self.listbox.insert(tk.END, f"{index}: {ImageBboxSelector.get_basename(image_path)}")
 
         if self.image_paths:
-            self.listbox.setCurrentRow(0)
+            self.listbox.selection_set(0)
+            self.listbox.see(0)
+        self.listbox.bind("<Double-Button-1>", self._on_double_click)
+        self.listbox.focus_set()
+        return self.listbox
 
-        self.listbox.itemDoubleClicked.connect(self._on_double_click)
-        layout.addWidget(self.listbox)
+    def _on_double_click(self, _event=None):
+        self.ok()
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self._on_accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-        self.listbox.setFocus()
-
-    def _on_double_click(self, _item=None):
-        self._on_accept()
-
-    def _on_accept(self):
-        row = self.listbox.currentRow()
-        if row >= 0:
-            self.result = self.image_paths[row]
-        self.accept()
+    def apply(self):
+        selection = self.listbox.curselection()
+        if selection:
+            self.result = self.image_paths[selection[0]]
 
 
-class BBoxCanvas(QWidget):
-    """Widget that displays the image and bounding box overlays."""
-
-    def __init__(self, selector):
-        super().__init__()
-        self.selector = selector
-        self._pixmap = None
-        self._temp_rect = None  # (x1, y1, x2, y2) in widget coords while drawing
-        self.setMinimumSize(200, 150)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-
-    def set_pixmap(self, pixmap):
-        self._pixmap = pixmap
-        self.update()
-
-    def clear_pixmap(self):
-        self._pixmap = None
-        self.update()
-
-    def set_temp_rect(self, rect):
-        """rect = (x1, y1, x2, y2) in widget coords, or None."""
-        self._temp_rect = rect
-        self.update()
-
-    def paintEvent(self, _event):
-        painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor("black"))
-
-        if self._pixmap is None:
-            font = QFont("Arial", 16, QFont.Weight.Bold)
-            painter.setFont(font)
-            painter.setPen(QColor("white"))
-            painter.drawText(
-                self.rect(),
-                Qt.AlignmentFlag.AlignCenter,
-                "No image loaded.\nUse the File menu to open image(s), a folder, or a JSONL file.",
-            )
-            painter.end()
-            return
-
-        painter.drawPixmap(0, 0, self._pixmap)
-
-        sel = self.selector
-        font_size, line_width, text_padding = sel.get_display_annotation_style()
-        ann_font = QFont("Arial", font_size, QFont.Weight.Bold)
-        metrics = QFontMetrics(ann_font)
-        painter.setFont(ann_font)
-
-        for i, b in enumerate(sel.boxes):
-            is_selected = (i == sel.selected_box_index)
-            outline_color = QColor("cyan") if is_selected else QColor("red")
-            label_bg = QColor("cyan") if is_selected else QColor("red")
-            label_fg = QColor("black") if is_selected else QColor("white")
-            lw = line_width + (1 if is_selected else 0)
-
-            dx1, dy1 = sel.original_to_display(b["x1"], b["y1"])
-            dx2, dy2 = sel.original_to_display(b["x2"], b["y2"])
-
-            painter.setPen(QPen(outline_color, lw))
-            painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
-            painter.drawRect(int(dx1), int(dy1), int(dx2 - dx1), int(dy2 - dy1))
-
-            label_text = b["label"] if b["label"] else f"box_{i + 1}"
-            text_x = int(dx1) + text_padding
-            text_y = max(2, int(dy1) - font_size - text_padding * 2)
-
-            text_w = metrics.horizontalAdvance(label_text)
-            text_h = metrics.height()
-            vertical_pad = max(2, text_padding // 2)
-
-            bg_rect = QRect(
-                text_x,
-                text_y + text_padding - vertical_pad,
-                text_w + text_padding * 2,
-                text_h + vertical_pad * 2,
-            )
-            painter.fillRect(bg_rect, label_bg)
-            painter.setPen(label_fg)
-            painter.drawText(
-                text_x + text_padding,
-                text_y + text_padding + metrics.ascent(),
-                label_text,
-            )
-
-        if self._temp_rect is not None:
-            x1, y1, x2, y2 = self._temp_rect
-            painter.setPen(QPen(QColor("red"), 2))
-            painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
-            painter.drawRect(int(min(x1, x2)), int(min(y1, y2)), int(abs(x2 - x1)), int(abs(y2 - y1)))
-
-        if sel.legend_visible:
-            sel._draw_legend_qt(painter)
-
-        painter.end()
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            pos = event.position()
-            self.selector.on_button_press(pos.x(), pos.y())
-
-    def mouseMoveEvent(self, event):
-        if event.buttons() & Qt.MouseButton.LeftButton:
-            pos = event.position()
-            self.selector.on_mouse_drag(pos.x(), pos.y())
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            pos = event.position()
-            self.selector.on_button_release(pos.x(), pos.y())
-
-    def mouseDoubleClickEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            pos = event.position()
-            self.selector.on_double_click(pos.x(), pos.y())
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.selector.on_canvas_resize(event.size().width(), event.size().height())
-
-
-class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attributes,too-many-public-methods
-    """Qt6-based bounding-box annotation tool for loading, editing,
+class ImageBboxSelector:  # pylint: disable=too-many-instance-attributes,too-many-public-methods
+    """Tkinter-based bounding-box annotation tool for loading, editing, 
     and exporting image annotations."""
-
     SUPPORTED_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tiff")
     SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "settings.json")
 
@@ -244,9 +101,9 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
         selected_image_path=None,
         image_paths=None,
     ):
-        self._app = QApplication.instance() or QApplication(sys.argv)
-        super().__init__()
-        self.setWindowTitle("Image BBox Selector")
+        self.root = tk.Tk()
+        self.root.title("Image BBox Selector")
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close_request)
 
         # Loaded image records keyed by image path; full image data is cached lazily
         self.loaded_images = {}
@@ -261,6 +118,7 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
         self.original_w = 1
         self.original_h = 1
         self.display_image = None
+        self.tk_image = None
         self.display_w = 800
         self.display_h = 600
         self.window_size_initialized = False
@@ -269,6 +127,7 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
         self.boxes = []
 
         # During draw/move operations
+        self.current_rect_id = None
         self.start_x = None
         self.start_y = None
         self.drag_mode = None
@@ -279,6 +138,8 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
 
         # Legend
         self.legend_visible = True
+        self.legend_bg_id = None
+        self.legend_text_id = None
 
         # Output annotation file path is chosen via a Save As dialog
         self.output_json = output_json
@@ -286,70 +147,100 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
         self.last_exported_image_path = None
 
         # Settings
-        self._autosave_enabled = False
+        self.autosave_enabled = tk.BooleanVar(value=False)
         self.last_used_label = ""
         self.load_user_settings()
 
-        # Build the UI
-        central = QWidget()
-        self.setCentralWidget(central)
-        root_layout = QHBoxLayout(central)
-        root_layout.setContentsMargins(8, 8, 8, 8)
-        root_layout.setSpacing(8)
+        self.autosave_enabled.trace_add("write", self.on_autosave_setting_changed)
 
-        # Sidebar
-        self.sidebar_frame = QFrame()
-        self.sidebar_frame.setFixedWidth(240)
-        sidebar_layout = QVBoxLayout(self.sidebar_frame)
-        sidebar_layout.setContentsMargins(0, 0, 0, 0)
-        sidebar_layout.setSpacing(4)
+        # Main layout
+        self.main_frame = tk.Frame(self.root)
+        self.main_frame.pack(fill=tk.BOTH, expand=True)
 
-        image_list_label = QLabel("Loaded Images")
-        image_list_label.setFont(QFont("Arial", 10, QFont.Weight.Bold))
-        sidebar_layout.addWidget(image_list_label)
+        self.sidebar_frame = tk.Frame(self.main_frame, width=240)
+        self.sidebar_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(8, 0), pady=8)
+        self.sidebar_frame.pack_propagate(False)
 
-        self.image_listbox = QListWidget()
-        self.image_listbox.currentRowChanged.connect(self._on_image_list_row_changed)
-        sidebar_layout.addWidget(self.image_listbox, stretch=1)
+        self.image_list_section = tk.Frame(self.sidebar_frame)
+        self.image_list_section.pack(fill=tk.BOTH, expand=True)
 
-        label_list_label = QLabel("Labels")
-        label_list_label.setFont(QFont("Arial", 10, QFont.Weight.Bold))
-        sidebar_layout.addWidget(label_list_label)
+        self.image_list_label = tk.Label(
+            self.image_list_section,
+            text="Loaded Images",
+            anchor="w",
+            font=("Arial", 10, "bold")
+        )
+        self.image_list_label.pack(fill=tk.X, pady=(0, 4))
 
-        self.label_listbox = QListWidget()
-        self.label_listbox.currentRowChanged.connect(self._on_label_list_row_changed)
-        sidebar_layout.addWidget(self.label_listbox, stretch=1)
+        self.image_list_frame = tk.Frame(self.image_list_section)
+        self.image_list_frame.pack(fill=tk.BOTH, expand=True)
 
-        root_layout.addWidget(self.sidebar_frame)
+        self.image_listbox = tk.Listbox(self.image_list_frame, exportselection=False)
+        self.image_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.image_listbox.bind("<<ListboxSelect>>", self.on_image_list_select)
+
+        self.image_list_scrollbar = tk.Scrollbar(self.image_list_frame, orient=tk.VERTICAL, 
+                                                 command=self.image_listbox.yview)
+        self.image_list_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.image_listbox.config(yscrollcommand=self.image_list_scrollbar.set)
+
+        self.label_list_section = tk.Frame(self.sidebar_frame)
+        self.label_list_section.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+
+        self.label_list_label = tk.Label(
+            self.label_list_section,
+            text="Labels",
+            anchor="w",
+            font=("Arial", 10, "bold")
+        )
+        self.label_list_label.pack(fill=tk.X, pady=(0, 4))
+
+        self.label_list_frame = tk.Frame(self.label_list_section)
+        self.label_list_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.label_listbox = tk.Listbox(self.label_list_frame, exportselection=False)
+        self.label_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.label_listbox.bind("<<ListboxSelect>>", self.on_label_list_select)
+
+        self.label_list_scrollbar = tk.Scrollbar(self.label_list_frame, orient=tk.VERTICAL, 
+                                                 command=self.label_listbox.yview)
+        self.label_list_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.label_listbox.config(yscrollcommand=self.label_list_scrollbar.set)
+
+        self.canvas_frame = tk.Frame(self.main_frame)
+        self.canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=8, pady=8)
 
         # Canvas
-        self.canvas = BBoxCanvas(self)
-        root_layout.addWidget(self.canvas, stretch=1)
+        self.canvas = tk.Canvas(self.canvas_frame, width=self.display_w, 
+                                height=self.display_h, bg="black")
+        self.canvas.pack(fill=tk.BOTH, expand=True)
+
+        # Draw image container
+        self.canvas.create_image(0, 0, anchor=tk.NW, tags="image")
+
+        # Bind mouse events
+        self.canvas.bind("<ButtonPress-1>", self.on_button_press)
+        self.canvas.bind("<B1-Motion>", self.on_mouse_drag)
+        self.canvas.bind("<ButtonRelease-1>", self.on_button_release)
+        self.canvas.bind("<Double-Button-1>", self.on_double_click)
+
+        # Resize handling
+        self.canvas.bind("<Configure>", self.on_window_resize)
 
         # Menu bar
         self.create_menu_bar()
 
-        # Register window-level keyboard shortcuts so they fire regardless
-        # of which child widget currently holds focus.
-        _shortcuts = [
-            ("S",       self.save_boxes_json_event),
-            ("C",       self.clear_boxes_event),
-            ("U",       self.undo_last_box_event),
-            ("Ctrl+Z",  self.undo_last_box_event),
-            ("L",       self.load_boxes_json_event),
-            ("E",       self.edit_selected_box_label_event),
-            ("D",       self.delete_selected_box_event),
-            ("Delete",  self.delete_selected_box_event),
-            ("Backspace", self.delete_selected_box_event),
-            ("H",       self.toggle_legend_event),
-        ]
-        for seq, slot in _shortcuts:
-            sc = QShortcut(QKeySequence(seq), self)
-            sc.activated.connect(slot)
-
-        # Initial load
-        self.show()
-        QApplication.processEvents()
+        # Keyboard shortcuts
+        self.root.bind("s", self.save_boxes_json_event)     # Save
+        self.root.bind("c", self.clear_boxes_event)         # Clear
+        self.root.bind("u", self.undo_last_box_event)       # Undo fallback
+        self.root.bind("<Control-z>", self.undo_last_box_event)  # Undo
+        self.root.bind("l", self.load_boxes_json_event)     # Load JSONL
+        self.root.bind("e", self.edit_selected_box_label_event)  # Edit selected label
+        self.root.bind("d", self.delete_selected_box_event)  # Delete selected box
+        self.root.bind("<Delete>", self.delete_selected_box_event)  # Delete selected box
+        self.root.bind("<BackSpace>", self.delete_selected_box_event)  # Delete selected box
+        self.root.bind("h", self.toggle_legend_event)       # Toggle legend
 
         if image_records:
             self.set_loaded_records(
@@ -375,7 +266,7 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
         else:
             self.initialize_empty_state()
 
-        self._app.exec()
+        self.root.mainloop()
 
     # -----------------------------
     # Coordinate conversion helpers
@@ -401,19 +292,42 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
         return dx, dy
 
     def initialize_empty_state(self):
-        screen = QApplication.primaryScreen().size()
-        screen_w, screen_h = screen.width(), screen.height()
+        self.root.update_idletasks()
+
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
         window_w = min(max(960, int(screen_w * 0.8)), max(640, screen_w - 40))
         window_h = min(max(700, int(screen_h * 0.8)), max(480, screen_h - 60))
+
+        canvas_w = max(500, window_w - 320)
+        canvas_h = max(360, window_h - 80)
+        self.canvas.config(width=canvas_w, height=canvas_h)
+
         x = max((screen_w - int(window_w)) // 2, 0)
         y = max((screen_h - int(window_h)) // 2, 0)
-        self.setGeometry(x, y, int(window_w), int(window_h))
+        self.root.geometry(f"{int(window_w)}x{int(window_h)}+{x}+{y}")
         self.window_size_initialized = True
+        self.root.update_idletasks()
         self.show_empty_canvas_message()
         self.mark_annotation_state_saved()
 
     def show_empty_canvas_message(self):
-        self.canvas.clear_pixmap()
+        self.canvas.delete("placeholder")
+        self.canvas.itemconfig("image", image="")
+        self.canvas.coords("image", 0, 0)
+
+        canvas_w = max(1, self.canvas.winfo_width())
+        canvas_h = max(1, self.canvas.winfo_height())
+        self.canvas.create_text(
+            canvas_w // 2,
+            canvas_h // 2,
+            text="No image loaded.\nUse the File menu to open image(s), a folder, or a JSONL file.",
+            fill="white",
+            anchor="center",
+            justify="center",
+            font=("Arial", 16, "bold"),
+            tags="placeholder",
+        )
 
     @staticmethod
     def normalize_box(x1, y1, x2, y2):
@@ -436,6 +350,7 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
             if self.point_in_box(x, y, self.boxes[index], padding=4):
                 return index
         return None
+
     def get_label_display_bbox(self, index):
         if not (0 <= index < len(self.boxes)):
             return None
@@ -448,10 +363,9 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
         text_x = dx1 + text_padding
         text_y = max(2, dy1 - display_font_size - (text_padding * 2))
 
-        font = QFont("Arial", display_font_size, QFont.Weight.Bold)
-        metrics = QFontMetrics(font)
-        text_w = metrics.horizontalAdvance(label_text)
-        text_h = metrics.height()
+        label_font = tkfont.Font(family="Arial", size=display_font_size, weight="bold")
+        text_w = label_font.measure(label_text)
+        text_h = label_font.metrics("linespace")
 
         vertical_pad = max(2, text_padding // 2)
         return (
@@ -734,21 +648,18 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
                     labels.append(label)
 
         return labels
+
     def prompt_for_box_label(self, title, prompt_text, initialvalue="", remember_result=True):
         dialog = LabelEntryDialog(
-            self,
+            self.root,
             title,
             prompt_text,
             existing_labels=self.get_all_existing_labels(),
             initialvalue=initialvalue,
         )
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            result = dialog.result
-        else:
-            result = None
-        if remember_result and result is not None:
-            self.last_used_label = result
-        return result
+        if remember_result and dialog.result is not None:
+            self.last_used_label = dialog.result
+        return dialog.result
 
     @staticmethod
     def parse_path_entries(raw_value):
@@ -764,10 +675,13 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
 
     @classmethod
     def prompt_for_path_entries(cls, title, prompt_text, parent=None, initialvalue=""):
-        text, ok = QInputDialog.getText(parent, title, prompt_text, text=initialvalue)
-        if not ok:
-            return []
-        return cls.parse_path_entries(text)
+        raw_value = simpledialog.askstring(
+            title,
+            prompt_text,
+            initialvalue=initialvalue,
+            parent=parent,
+        )
+        return cls.parse_path_entries(raw_value)
 
     @classmethod
     def prompt_for_startup_paths(cls, parent=None):
@@ -796,7 +710,7 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
         entered_paths = self.prompt_for_path_entries(
             "Open Path or S3 URL",
             "Enter one or more image paths, folder paths, JSONL files, or S3 URLs.\nUse one per line (or separate with commas).",
-            parent=self,
+            parent=self.root,
         )
         if not entered_paths:
             return
@@ -804,28 +718,23 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
         try:
             self.open_paths(entered_paths)
         except Exception as exc:
-            QMessageBox.critical(self, "Load Error", str(exc))
+            messagebox.showerror("Load Error", str(exc))
 
     def choose_output_json_path_from_prompt(self):
         initial_path = self.output_json or self.get_default_output_path()
-        entered_path, ok = QInputDialog.getText(
-            self,
+        entered_path = simpledialog.askstring(
             "Save JSONL to Path or S3 URL",
             "Enter a destination path for the JSON Lines file.\nYou can use a local path or an S3 URL such as s3://bucket/annotations.jsonl.",
-            text=initial_path,
+            initialvalue=initial_path,
+            parent=self.root,
         )
-        if ok and entered_path:
-            self.output_json = self.normalize_path(entered_path.strip())
+        if entered_path:
+            self.output_json = self.normalize_path(entered_path)
             return True
         return False
 
     @staticmethod
-    def prompt_for_image_selection(
-        image_paths,
-        parent=None,
-        prompt_title="Select Image",
-        intro_text="Multiple images are loaded.",
-    ):
+    def prompt_for_image_selection(image_paths, parent=None, prompt_title="Select Image", intro_text="Multiple images are loaded."):
         if not image_paths:
             return None
         if len(image_paths) == 1:
@@ -837,8 +746,7 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
             image_paths,
             intro_text=intro_text,
         )
-        accepted = dialog.exec() == QDialog.DialogCode.Accepted
-        if not accepted or dialog.result is None:
+        if dialog.result is None:
             return image_paths[0]
         return dialog.result
 
@@ -891,7 +799,7 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
         if not isinstance(settings, dict):
             return
 
-        self._autosave_enabled = bool(settings.get("autosave_enabled", False))
+        self.autosave_enabled.set(bool(settings.get("autosave_enabled", False)))
 
     def save_user_settings(self):
         settings = {
@@ -902,11 +810,14 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
             json.dump(settings, f, indent=2)
             f.write("\n")
 
-    def on_autosave_setting_changed(self):
+    def on_autosave_setting_changed(self, *_args):
         self.save_user_settings()
 
     def is_autosave_enabled(self):
-        return bool(getattr(self, "_autosave_enabled", False))
+        autosave_setting = getattr(self, "autosave_enabled", True)
+        if hasattr(autosave_setting, "get"):
+            return bool(autosave_setting.get())
+        return bool(autosave_setting)
 
     def maybe_autosave(self):
         if self.is_autosave_enabled():
@@ -949,7 +860,7 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
             if prompt_selection and len(self.loaded_image_order) > 1:
                 selected_image_path = self.prompt_for_image_selection(
                     self.loaded_image_order,
-                    parent=self,
+                    parent=self.root,
                     prompt_title="Select Image",
                     intro_text="Multiple images are loaded."
                 )
@@ -973,7 +884,7 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
         if prompt_selection and len(unique_paths) > 1:
             selected_image_path = self.prompt_for_image_selection(
                 unique_paths,
-                parent=self,
+                parent=self.root,
                 prompt_title="Select Image",
                 intro_text="Multiple images are loaded."
             )
@@ -988,63 +899,61 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
 
     def refresh_image_list(self, select_path=None):
         self._updating_image_list = True
-        self.image_listbox.clear()
+        self.image_listbox.delete(0, tk.END)
 
         for image_path in self.loaded_image_order:
             box_count = len(self.loaded_images[image_path].get("boxes", []))
-            self.image_listbox.addItem(f"{self.get_basename(image_path)} ({box_count})")
+            self.image_listbox.insert(tk.END, f"{self.get_basename(image_path)} ({box_count})")
 
         target_path = select_path or self.current_image_path
         if target_path in self.loaded_image_order:
             index = self.loaded_image_order.index(target_path)
-            self.image_listbox.setCurrentRow(index)
-            item = self.image_listbox.item(index)
-            if item:
-                self.image_listbox.scrollToItem(item)
+            self.image_listbox.selection_clear(0, tk.END)
+            self.image_listbox.selection_set(index)
+            self.image_listbox.see(index)
 
         self._updating_image_list = False
 
     def refresh_label_list(self, select_index=None):
         self._updating_label_list = True
-        self.label_listbox.clear()
+        self.label_listbox.delete(0, tk.END)
 
         for index, box in enumerate(self.boxes, start=1):
             label_text = box["label"] if box["label"] else f"box_{index}"
-            self.label_listbox.addItem(f"{index}: {label_text}")
+            self.label_listbox.insert(tk.END, f"{index}: {label_text}")
 
-        self.label_listbox.clearSelection()
+        self.label_listbox.selection_clear(0, tk.END)
         target_index = self.selected_box_index if select_index is None else select_index
         if target_index is not None and 0 <= target_index < len(self.boxes):
-            self.label_listbox.setCurrentRow(target_index)
-            item = self.label_listbox.item(target_index)
-            if item:
-                self.label_listbox.scrollToItem(item)
+            self.label_listbox.selection_set(target_index)
+            self.label_listbox.see(target_index)
 
         self._updating_label_list = False
 
-    def _on_image_list_row_changed(self, row):
-        if self._updating_image_list or row < 0:
+    def on_image_list_select(self, _event=None):
+        if self._updating_image_list:
             return
-        if row >= len(self.loaded_image_order):
+
+        selection = self.image_listbox.curselection()
+        if not selection:
             return
-        image_path = self.loaded_image_order[row]
+
+        image_path = self.loaded_image_order[selection[0]]
         if image_path != self.current_image_path:
             self.display_image_path(image_path)
 
-    def on_image_list_select(self, _event=None):
-        """Kept for API compatibility; internal use goes through _on_image_list_row_changed."""
-        self._on_image_list_row_changed(self.image_listbox.currentRow())
-
-    def _on_label_list_row_changed(self, row):
-        if self._updating_label_list or row < 0:
-            return
-        if row != self.selected_box_index:
-            self.selected_box_index = row
-            self.redraw_overlays()
-
     def on_label_list_select(self, _event=None):
-        """Kept for API compatibility; internal use goes through _on_label_list_row_changed."""
-        self._on_label_list_row_changed(self.label_listbox.currentRow())
+        if self._updating_label_list:
+            return
+
+        selection = self.label_listbox.curselection()
+        if not selection:
+            return
+
+        selected_index = selection[0]
+        if selected_index != self.selected_box_index:
+            self.selected_box_index = selected_index
+            self.redraw_overlays()
 
     def display_image_path(self, image_path):
         image_path = self.normalize_path(image_path)
@@ -1068,6 +977,7 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
         self.current_image_path = image_path
         self.image_path = image_path
         self.original_w, self.original_h = self.original_image.size
+        self.current_rect_id = None
         self.start_x = None
         self.start_y = None
         self.drag_mode = None
@@ -1075,12 +985,9 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
         self.drag_box_snapshot = None
         self.selected_box_index = None
         self.box_was_moved = False
-        self.canvas.set_temp_rect(None)
 
-        self.boxes = [
-            self.validate_box(box) for box in self.loaded_images[image_path].get("boxes", [])
-        ]
-        self.setWindowTitle(f"Image BBox Selector - {self.get_basename(image_path)}")
+        self.boxes = [self.validate_box(box) for box in self.loaded_images[image_path].get("boxes", [])]
+        self.root.title(f"Image BBox Selector - {self.get_basename(image_path)}")
 
         self.refresh_image_list(select_path=image_path)
         self.refresh_label_list(select_index=None)
@@ -1088,38 +995,21 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
             self.set_initial_window_size()
             self.window_size_initialized = True
         else:
-            QApplication.processEvents()
+            self.root.update_idletasks()
         self.update_canvas_image()
         self.redraw_overlays()
-
-    @staticmethod
-    def _pil_to_qpixmap(pil_image):
-        """Convert a PIL Image to a QPixmap."""
-        pil_rgba = pil_image.convert("RGBA")
-        data = pil_rgba.tobytes("raw", "RGBA")
-        qimage = QImage(
-            data,
-            pil_rgba.width,
-            pil_rgba.height,
-            pil_rgba.width * 4,
-            QImage.Format.Format_RGBA8888,
-        )
-        return QPixmap.fromImage(qimage)
 
     def update_canvas_image(self, available_width=None, available_height=None):
         if self.original_image is None:
             return
 
         if available_width is None:
-            available_width = self.canvas.width()
+            available_width = self.canvas.winfo_width()
         if available_height is None:
-            available_height = self.canvas.height()
+            available_height = self.canvas.winfo_height()
 
         available_width = max(1, int(available_width))
         available_height = max(1, int(available_height))
-
-        if available_width < 2 or available_height < 2:
-            return
 
         scale = min(
             available_width / max(1, self.original_w),
@@ -1133,26 +1023,42 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
         if (self.display_w, self.display_h) == (self.original_w, self.original_h):
             self.display_image = self.original_image.copy()
         else:
-            self.display_image = self.original_image.resize(
-                (self.display_w, self.display_h), Image.Resampling.LANCZOS
-            )
+            self.display_image = self.original_image.resize((self.display_w, self.display_h), Image.Resampling.LANCZOS)
 
-        pixmap = self._pil_to_qpixmap(self.display_image)
-        self.canvas.set_pixmap(pixmap)
+        self.tk_image = ImageTk.PhotoImage(self.display_image)
+        self.canvas.delete("placeholder")
+        self.canvas.itemconfig("image", image=self.tk_image)
+        self.canvas.coords("image", 0, 0)
 
     def is_window_fullscreen(self):
-        return self.isFullScreen() or self.isMaximized()
+        try:
+            if bool(self.root.attributes("-fullscreen")):
+                return True
+        except tk.TclError:
+            pass
+
+        try:
+            return self.root.state() == "zoomed"
+        except tk.TclError:
+            return False
 
     def set_initial_window_size(self):
+        self.root.update_idletasks()
+
         if self.is_window_fullscreen():
             return
 
-        screen = QApplication.primaryScreen().size()
-        screen_w, screen_h = screen.width(), screen.height()
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
 
-        sidebar_w = 240
-        max_canvas_w = max(400, screen_w - sidebar_w - 60)
-        max_canvas_h = max(300, screen_h - 100)
+        sidebar_w = max(220, self.sidebar_frame.winfo_reqwidth())
+        canvas_extra_w = max(16, self.canvas_frame.winfo_reqwidth() - self.canvas.winfo_reqwidth())
+        canvas_extra_h = max(16, self.canvas_frame.winfo_reqheight() - self.canvas.winfo_reqheight())
+        window_extra_w = max(16, self.root.winfo_reqwidth() - self.main_frame.winfo_reqwidth())
+        window_extra_h = max(16, self.root.winfo_reqheight() - self.main_frame.winfo_reqheight())
+
+        max_canvas_w = max(400, screen_w - sidebar_w - canvas_extra_w - window_extra_w - 40)
+        max_canvas_h = max(300, screen_h - canvas_extra_h - window_extra_h - 60)
 
         scale = min(
             max_canvas_w / max(1, self.original_w),
@@ -1162,87 +1068,60 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
         target_canvas_w = max(1, int(round(self.original_w * scale)))
         target_canvas_h = max(1, int(round(self.original_h * scale)))
 
-        window_w = min(target_canvas_w + sidebar_w + 40, screen_w - 20)
-        window_h = min(target_canvas_h + 80, screen_h - 40)
+        self.canvas.config(width=target_canvas_w, height=target_canvas_h)
+
+        window_w = min(target_canvas_w + sidebar_w + canvas_extra_w + window_extra_w + 16, screen_w - 20)
+        window_h = min(target_canvas_h + canvas_extra_h + window_extra_h + 16, screen_h - 40)
 
         x = max((screen_w - int(window_w)) // 2, 0)
         y = max((screen_h - int(window_h)) // 2, 0)
-        self.setGeometry(x, y, int(window_w), int(window_h))
-        QApplication.processEvents()
+        self.root.geometry(f"{int(window_w)}x{int(window_h)}+{x}+{y}")
 
     def create_menu_bar(self):
-        menubar = self.menuBar()
+        menubar = tk.Menu(self.root)
 
-        file_menu = menubar.addMenu("File")
-        file_menu.addAction("Open Image(s)...", self.open_image_event)
-        file_menu.addAction("Open Folder...", self.open_folder_event)
-        file_menu.addAction("Open Path/URL...", self.open_path_event)
-        file_menu.addAction("Open JSONL...", self.load_boxes_json_event)
-        file_menu.addSeparator()
-        file_menu.addAction("Save JSONL...", self.save_boxes_json_event)
-        file_menu.addAction("Save JSONL to Path/URL...", self.save_boxes_json_to_path_event)
-        file_menu.addAction("Export Annotated Image...", self.save_annotated_image_event)
-        file_menu.addSeparator()
-        file_menu.addAction("Clear Boxes", self.clear_boxes_event)
-        file_menu.addSeparator()
-        file_menu.addAction("Exit", self.close)
+        file_menu = tk.Menu(menubar, tearoff=0)
+        file_menu.add_command(label="Open Image(s)...", command=self.open_image_event)
+        file_menu.add_command(label="Open Folder...", command=self.open_folder_event)
+        file_menu.add_command(label="Open Path/URL...", command=self.open_path_event)
+        file_menu.add_command(label="Open JSONL...", command=self.load_boxes_json_event)
+        file_menu.add_separator()
+        file_menu.add_command(label="Save JSONL...", command=self.save_boxes_json_event)
+        file_menu.add_command(label="Save JSONL to Path/URL...", command=self.save_boxes_json_to_path_event)
+        file_menu.add_command(label="Export Annotated Image...", command=self.save_annotated_image_event)
+        file_menu.add_separator()
+        file_menu.add_command(label="Clear Boxes", command=self.clear_boxes_event)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self.on_close_request)
 
-        edit_menu = menubar.addMenu("Edit")
-        edit_menu.addAction("Edit Selected Label", self.edit_selected_box_label_event)
-        edit_menu.addAction("Delete Selected Box", self.delete_selected_box_event)
+        edit_menu = tk.Menu(menubar, tearoff=0)
+        edit_menu.add_command(label="Edit Selected Label", command=self.edit_selected_box_label_event)
+        edit_menu.add_command(label="Delete Selected Box", command=self.delete_selected_box_event)
 
-        settings_menu = menubar.addMenu("Settings")
-        self._autosave_action = QAction("Autosave", self, checkable=True)
-        self._autosave_action.setChecked(self._autosave_enabled)
-        self._autosave_action.triggered.connect(self._on_autosave_action_toggled)
-        settings_menu.addAction(self._autosave_action)
+        settings_menu = tk.Menu(menubar, tearoff=0)
+        settings_menu.add_checkbutton(label="Autosave", variable=self.autosave_enabled, onvalue=True, offvalue=False)
 
-    def _on_autosave_action_toggled(self, checked):
-        self._autosave_enabled = bool(checked)
-        self.on_autosave_setting_changed()
-
-    # -----------------------------
-    # Window close
-    # -----------------------------
-    def closeEvent(self, event):
-        if not self.has_unsaved_annotation_changes():
-            event.accept()
-            return
-
-        msgbox = QMessageBox(self)
-        msgbox.setWindowTitle("Save Before Exit")
-        msgbox.setText("Would you like to save the annotations to a file before closing?")
-        yes_btn = msgbox.addButton(QMessageBox.StandardButton.Yes)
-        no_btn = msgbox.addButton(QMessageBox.StandardButton.No)
-        cancel_btn = msgbox.addButton(QMessageBox.StandardButton.Cancel)
-        msgbox.setDefaultButton(cancel_btn)
-        msgbox.exec()
-
-        clicked = msgbox.clickedButton()
-        if clicked == cancel_btn:
-            event.ignore()
-            return
-
-        if clicked == yes_btn:
-            if not self.save_boxes_json(prompt_for_path=True):
-                event.ignore()
-                return
-
-        event.accept()
+        menubar.add_cascade(label="File", menu=file_menu)
+        menubar.add_cascade(label="Edit", menu=edit_menu)
+        menubar.add_cascade(label="Settings", menu=settings_menu)
+        self.root.config(menu=menubar)
 
     # -----------------------------
     # Drawing & events
     # -----------------------------
-    def on_button_press(self, x, y):
+    def on_button_press(self, event):
         if self.original_image is None:
             return
 
-        hit_index = self.find_box_or_label_at_display_point(x, y)
-        click_ox, click_oy = self.display_to_original(x, y)
+        hit_index = self.find_box_or_label_at_display_point(event.x, event.y)
+        click_ox, click_oy = self.display_to_original(event.x, event.y)
 
         self.drag_mode = None
         self.box_was_moved = False
-        self.canvas.set_temp_rect(None)
+
+        if self.current_rect_id is not None:
+            self.canvas.delete(self.current_rect_id)
+            self.current_rect_id = None
 
         if hit_index is not None:
             self.selected_box_index = hit_index
@@ -1256,20 +1135,18 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
         self.selected_box_index = None
         self.drag_start_original = None
         self.drag_box_snapshot = None
-        self.start_x, self.start_y = x, y
+        self.start_x, self.start_y = event.x, event.y
         self.drag_mode = "draw"
-        self.canvas.set_temp_rect((x, y, x, y))
+        self.current_rect_id = self.canvas.create_rectangle(
+            self.start_x, self.start_y, self.start_x, self.start_y,
+            outline="red", width=2, tags="temp_rect"
+        )
         self.refresh_label_list(select_index=None)
         self.redraw_overlays()
 
-    def on_mouse_drag(self, x, y):
-        if (
-            self.drag_mode == "move"
-            and self.selected_box_index is not None
-            and self.drag_start_original
-            and self.drag_box_snapshot
-        ):
-            current_ox, current_oy = self.display_to_original(x, y)
+    def on_mouse_drag(self, event):
+        if self.drag_mode == "move" and self.selected_box_index is not None and self.drag_start_original and self.drag_box_snapshot:
+            current_ox, current_oy = self.display_to_original(event.x, event.y)
             delta_x = current_ox - self.drag_start_original[0]
             delta_y = current_oy - self.drag_start_original[1]
             moved_box = self.move_box(self.drag_box_snapshot, delta_x, delta_y)
@@ -1278,10 +1155,10 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
             self.redraw_overlays()
             return
 
-        if self.drag_mode == "draw" and self.start_x is not None:
-            self.canvas.set_temp_rect((self.start_x, self.start_y, x, y))
+        if self.drag_mode == "draw" and self.current_rect_id is not None:
+            self.canvas.coords(self.current_rect_id, self.start_x, self.start_y, event.x, event.y)
 
-    def on_button_release(self, x, y):
+    def on_button_release(self, event):
         if self.drag_mode == "move":
             self.drag_mode = None
             self.drag_start_original = None
@@ -1300,7 +1177,7 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
             return
 
         self.drag_mode = None
-        end_x, end_y = x, y
+        end_x, end_y = event.x, event.y
 
         # Normalize in display space
         dx1, dy1, dx2, dy2 = self.normalize_box(self.start_x, self.start_y, end_x, end_y)
@@ -1316,7 +1193,9 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
 
         # Ignore near-zero boxes
         if abs(ox2 - ox1) < 2 or abs(oy2 - oy1) < 2:
-            self.canvas.set_temp_rect(None)
+            if self.current_rect_id is not None:
+                self.canvas.delete(self.current_rect_id)
+                self.current_rect_id = None
             self.start_x = None
             self.start_y = None
             return
@@ -1331,10 +1210,16 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
         if label is None:
             label = ""  # user cancelled -> empty label
 
-        self.boxes.append({"x1": ox1, "y1": oy1, "x2": ox2, "y2": oy2, "label": label})
+        self.boxes.append({
+            "x1": ox1, "y1": oy1, "x2": ox2, "y2": oy2, "label": label
+        })
         self.selected_box_index = len(self.boxes) - 1
 
-        self.canvas.set_temp_rect(None)
+        # Remove temp rectangle and redraw persistent overlays
+        if self.current_rect_id is not None:
+            self.canvas.delete(self.current_rect_id)
+            self.current_rect_id = None
+
         self.start_x = None
         self.start_y = None
         self.sync_current_image_record()
@@ -1343,26 +1228,32 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
         self.redraw_overlays()
         self.maybe_autosave()
 
-    def on_double_click(self, x, y):
+    def on_double_click(self, event):
         if self.original_image is None:
             return
 
-        hit_index = self.find_box_or_label_at_display_point(x, y)
+        hit_index = self.find_box_or_label_at_display_point(event.x, event.y)
         if hit_index is not None:
             self.selected_box_index = hit_index
             self.refresh_label_list(select_index=hit_index)
             self.redraw_overlays()
             self.edit_selected_box_label_event()
 
-    def on_canvas_resize(self, w, h):
+    def on_window_resize(self, event):
+        if event.widget is not self.canvas:
+            return
+
         if self.original_image is None:
             self.show_empty_canvas_message()
             return
 
-        if w < 2 or h < 2:
+        # Avoid invalid tiny sizes
+        if event.width < 2 or event.height < 2:
             return
 
-        self.update_canvas_image(w, h)
+        self.update_canvas_image(event.width, event.height)
+
+        # Redraw boxes/labels/legend
         self.redraw_overlays()
 
     @staticmethod
@@ -1404,11 +1295,60 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
     # Overlay rendering
     # -----------------------------
     def redraw_overlays(self):
-        """Trigger a repaint of the canvas widget."""
-        self.canvas.update()
+        # Remove old overlays (except base image)
+        self.canvas.delete("box")
+        self.canvas.delete("box_label")
+        self.canvas.delete("legend")
 
-    def _draw_legend_qt(self, painter):
-        """Draw the shortcut legend overlay onto the given QPainter."""
+        display_font_size, base_line_width, text_padding = self.get_display_annotation_style()
+
+        # Draw boxes from original-space data -> display-space
+        for i, b in enumerate(self.boxes, start=1):
+            dx1, dy1 = self.original_to_display(b["x1"], b["y1"])
+            dx2, dy2 = self.original_to_display(b["x2"], b["y2"])
+            is_selected = (i - 1 == self.selected_box_index)
+            outline_color = "cyan" if is_selected else "red"
+            label_fill_color = "black" if is_selected else "white"
+            label_bg_color = "cyan" if is_selected else "red"
+            line_width = base_line_width + (1 if is_selected else 0)
+
+            self.canvas.create_rectangle(
+                dx1, dy1, dx2, dy2,
+                outline=outline_color, width=line_width, tags="box"
+            )
+
+            # Label text shown near top-left of box
+            label_text = b["label"] if b["label"] else f"box_{i}"
+            text_x = dx1 + text_padding
+            text_y = max(2, dy1 - display_font_size - (text_padding * 2))
+            text_id = self.canvas.create_text(
+                text_x + text_padding,
+                text_y + text_padding,
+                text=label_text,
+                fill=label_fill_color,
+                anchor="nw",
+                font=("Arial", display_font_size, "bold"),
+                tags="box_label"
+            )
+
+            text_bbox = self.canvas.bbox(text_id)
+            if text_bbox:
+                x1, y1, x2, y2 = text_bbox
+                bg_id = self.canvas.create_rectangle(
+                    x1 - text_padding,
+                    y1 - max(2, text_padding // 2),
+                    x2 + text_padding,
+                    y2 + max(2, text_padding // 2),
+                    fill=label_bg_color,
+                    outline=label_bg_color,
+                    tags="box_label"
+                )
+                self.canvas.tag_raise(text_id, bg_id)
+
+        if self.legend_visible:
+            self.draw_legend()
+
+    def draw_legend(self):
         current_index = 0
         if self.current_image_path in self.loaded_image_order:
             current_index = self.loaded_image_order.index(self.current_image_path) + 1
@@ -1418,30 +1358,27 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
             f"Image: {current_index}/{len(self.loaded_image_order)}  Boxes: {len(self.boxes)}"
         )
 
-        font = QFont("Arial", 10)
-        painter.setFont(font)
-        metrics = QFontMetrics(font)
-
-        lines = legend_text.split("\n")
-        max_w = max(metrics.horizontalAdvance(line) for line in lines)
-        line_h = metrics.height()
-
-        pad = 6
+        # Place at top-left
         x, y = 10, 10
-        total_h = line_h * len(lines)
-
-        bg_rect = QRect(x - pad, y - pad, max_w + pad * 2, total_h + pad * 2)
-        painter.fillRect(bg_rect, QColor(0, 0, 0))
-        painter.setPen(QPen(QColor("#666666"), 1))
-        painter.drawRect(bg_rect)
-
-        painter.setPen(QColor("white"))
-        for i, line in enumerate(lines):
-            painter.drawText(x, y + metrics.ascent() + i * line_h, line)
-
-    def draw_legend(self):
-        """Alias kept for API compatibility; triggers a full canvas repaint."""
-        self.redraw_overlays()
+        text_id = self.canvas.create_text(
+            x, y,
+            text=legend_text,
+            fill="white",
+            anchor="nw",
+            font=("Arial", 10),
+            tags="legend"
+        )
+        bbox = self.canvas.bbox(text_id)
+        if bbox:
+            x1, y1, x2, y2 = bbox
+            pad = 6
+            bg_id = self.canvas.create_rectangle(
+                x1 - pad, y1 - pad, x2 + pad, y2 + pad,
+                fill="#000000", outline="#666666", width=1,
+                tags="legend"
+            )
+            # Raise text above background
+            self.canvas.tag_raise(text_id, bg_id)
 
     # -----------------------------
     # Actions
@@ -1549,12 +1486,19 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
 
         dialog_initialfile = self.get_basename(initial_path) or "annotated_image.png"
 
-        selected_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export annotated image",
-            os.path.join(dialog_initialdir, dialog_initialfile),
-            "PNG image (*.png);;JPEG image (*.jpg *.jpeg);;Bitmap image (*.bmp)"
-            ";;TIFF image (*.tif *.tiff);;GIF image (*.gif);;All files (*.*)",
+        selected_path = filedialog.asksaveasfilename(
+            title="Export annotated image",
+            defaultextension=".png",
+            initialdir=dialog_initialdir,
+            initialfile=dialog_initialfile,
+            filetypes=[
+                ("PNG image", "*.png"),
+                ("JPEG image", "*.jpg *.jpeg"),
+                ("Bitmap image", "*.bmp"),
+                ("TIFF image", "*.tif *.tiff"),
+                ("GIF image", "*.gif"),
+                ("All files", "*.*"),
+            ]
         )
         if selected_path:
             return self.normalize_path(selected_path)
@@ -1572,11 +1516,12 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
 
         dialog_initialfile = self.get_basename(initial_path) or "annotations.jsonl"
 
-        selected_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save bounding boxes JSON Lines",
-            os.path.join(dialog_initialdir, dialog_initialfile),
-            "JSON Lines files (*.jsonl);;All files (*.*)",
+        selected_path = filedialog.asksaveasfilename(
+            title="Save bounding boxes JSON Lines",
+            defaultextension=".jsonl",
+            initialdir=dialog_initialdir,
+            initialfile=dialog_initialfile,
+            filetypes=[("JSON Lines files", "*.jsonl"), ("All files", "*.*")]
         )
         if selected_path:
             self.output_json = self.normalize_path(selected_path)
@@ -1585,42 +1530,34 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
 
     def load_boxes_json(self, json_path=None):
         if not json_path:
-            json_path, _ = QFileDialog.getOpenFileName(
-                self,
-                "Open bounding boxes JSON Lines",
-                "",
-                "JSON Lines files (*.jsonl);;All files (*.*)",
+            json_path = filedialog.askopenfilename(
+                title="Open bounding boxes JSON Lines",
+                filetypes=[("JSON Lines files", "*.jsonl"), ("All files", "*.*")]
             )
             if not json_path:
                 return False
 
         json_path = self.normalize_path(json_path)
-        image_records, selected_image_path = self.read_annotation_file(json_path, parent=self)
+        image_records, selected_image_path = self.read_annotation_file(json_path, parent=self.root)
         self.set_loaded_records(
             image_records,
             selected_image_path=selected_image_path,
             output_json=json_path,
-            prompt_selection=False,
+            prompt_selection=False
         )
         return True
 
     def load_boxes_json_event(self, _event=None):
         try:
             if self.load_boxes_json():
-                QMessageBox.information(
-                    self,
-                    "Loaded",
-                    f"Loaded {len(self.loaded_image_order)} image(s) from {self.output_json}",
-                )
+                messagebox.showinfo("Loaded", f"Loaded {len(self.loaded_image_order)} image(s) from {self.output_json}")
         except Exception as exc:
-            QMessageBox.critical(self, "Load Error", str(exc))
+            messagebox.showerror("Load Error", str(exc))
 
     def open_image_event(self):
-        image_paths, _ = QFileDialog.getOpenFileNames(
-            self,
-            "Open image files",
-            "",
-            "Image files (*.png *.jpg *.jpeg *.bmp *.gif *.tiff);;All files (*.*)",
+        image_paths = filedialog.askopenfilenames(
+            title="Open image files",
+            filetypes=[("Image files", "*.png *.jpg *.jpeg *.bmp *.gif *.tiff"), ("All files", "*.*")]
         )
         if not image_paths:
             return
@@ -1628,33 +1565,27 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
         try:
             self.open_paths(image_paths)
         except Exception as exc:
-            QMessageBox.critical(self, "Load Error", str(exc))
+            messagebox.showerror("Load Error", str(exc))
 
     def open_folder_event(self):
-        folder_path = QFileDialog.getExistingDirectory(self, "Open folder of images")
+        folder_path = filedialog.askdirectory(title="Open folder of images")
         if not folder_path:
             return
 
         try:
             image_paths = self.list_image_paths_in_folder(folder_path)
         except Exception as exc:
-            QMessageBox.critical(self, "Load Error", str(exc))
+            messagebox.showerror("Load Error", str(exc))
             return
 
         if not image_paths:
-            QMessageBox.information(
-                self,
-                "No Images Found",
-                "No supported image files were found in the selected folder.",
-            )
+            messagebox.showinfo("No Images Found", "No supported image files were found in the selected folder.")
             return
 
         try:
-            self.set_loaded_image_paths(
-                image_paths, output_json=None, prompt_selection=len(image_paths) > 1
-            )
+            self.set_loaded_image_paths(image_paths, output_json=None, prompt_selection=len(image_paths) > 1)
         except Exception as exc:
-            QMessageBox.critical(self, "Load Error", str(exc))
+            messagebox.showerror("Load Error", str(exc))
 
     def edit_selected_box_label_event(self, _event=None):
         if self.selected_box_index is None or not (0 <= self.selected_box_index < len(self.boxes)):
@@ -1686,13 +1617,7 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
         if label:
             confirm_message = f"Delete the selected bounding box labeled '{label}'?"
 
-        reply = QMessageBox.question(
-            self,
-            "Delete Box",
-            confirm_message,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+        if not messagebox.askyesno("Delete Box", confirm_message, parent=self.root):
             return
 
         self.boxes.pop(self.selected_box_index)
@@ -1720,7 +1645,7 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
             try:
                 existing_records = self.load_annotation_records(self.output_json)
             except ValueError as exc:
-                QMessageBox.critical(self, "Save Error", f"Could not update annotation file:\n{exc}")
+                messagebox.showerror("Save Error", f"Could not update annotation file:\n{exc}")
                 return False
 
         loaded_record_map = {
@@ -1760,16 +1685,16 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
     def save_boxes_json_event(self, _event=None):
         try:
             if self.save_boxes_json(prompt_for_path=True):
-                QMessageBox.information(self, "Saved", f"Saved annotations for {len(self.loaded_image_order)} image(s) to {self.output_json}")
+                messagebox.showinfo("Saved", f"Saved annotations for {len(self.loaded_image_order)} image(s) to {self.output_json}")
         except Exception as exc:
-            QMessageBox.critical(self, "Save Error", str(exc))
+            messagebox.showerror("Save Error", str(exc))
 
     def save_boxes_json_to_path_event(self):
         try:
             if self.choose_output_json_path_from_prompt() and self.save_boxes_json(prompt_for_path=False):
-                QMessageBox.information(self, "Saved", f"Saved annotations for {len(self.loaded_image_order)} image(s) to {self.output_json}")
+                messagebox.showinfo("Saved", f"Saved annotations for {len(self.loaded_image_order)} image(s) to {self.output_json}")
         except Exception as exc:
-            QMessageBox.critical(self, "Save Error", str(exc))
+            messagebox.showerror("Save Error", str(exc))
 
     def save_annotated_image(self, output_path=None, prompt_for_path=True):
         if self.current_image_path is None or self.original_image is None:
@@ -1830,22 +1755,15 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
     def save_annotated_image_event(self, _event=None):
         try:
             if self.save_annotated_image(prompt_for_path=True):
-                QMessageBox.information(
-                    self, "Saved", f"Saved annotated image to {self.last_exported_image_path}"
-                )
+                messagebox.showinfo("Saved", f"Saved annotated image to {self.last_exported_image_path}")
         except Exception as exc:
-            QMessageBox.critical(self, "Export Error", str(exc))
+            messagebox.showerror("Export Error", str(exc))
 
     def clear_boxes_event(self, _event=None):
         if not self.boxes:
             return
-        reply = QMessageBox.question(
-            self,
-            "Clear Boxes",
-            "Clear all bounding boxes for the current image?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply == QMessageBox.StandardButton.Yes:
+        confirm = messagebox.askyesno("Clear Boxes", "Clear all bounding boxes for the current image?")
+        if confirm:
             self.boxes.clear()
             self.selected_box_index = None
             self.sync_current_image_record()
@@ -1870,14 +1788,28 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
         self.redraw_overlays()
 
     def on_close_request(self):
-        """Called by the Exit menu action."""
-        self.close()
+        if not self.has_unsaved_annotation_changes():
+            self.root.destroy()
+            return
+
+        answer = messagebox.askyesnocancel(
+            "Save Before Exit",
+            "Would you like to save the annotations to a file before closing?",
+            parent=self.root,
+        )
+
+        if answer is None:
+            return
+
+        if answer:
+            if not self.save_boxes_json(prompt_for_path=True):
+                return
+
+        self.root.destroy()
 
 
 if __name__ == "__main__":
     try:
         ImageBboxSelector()
     except Exception as exc:
-        _app = QApplication.instance() or QApplication(sys.argv)
-        QMessageBox.critical(None, "Startup Error", str(exc))
-        sys.exit(1)
+        messagebox.showerror("Startup Error", str(exc))
