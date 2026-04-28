@@ -1,0 +1,1 @@
+{"image": "/home/ryanmcgreevy/Projects/bbox/input/test1.jpg", "image_size": {"width": 1280, "height": 720}, "boxes": [{"x1": 164, "y1": 279, "x2": 333, "y2": 425, "label": "Deer"}]}

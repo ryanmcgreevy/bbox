@@ -1,0 +1,2 @@
+{"image": "/home/ryanmcgreevy/Projects/bbox/input/test1.jpg", "image_size": {"width": 1280, "height": 720}, "boxes": [{"x1": 67, "y1": 284, "x2": 235, "y2": 429, "label": "deer"}]}
+{"image": "/home/ryanmcgreevy/Projects/bbox/input/test2.jpg", "image_size": {"width": 1280, "height": 720}, "boxes": [{"x1": 941, "y1": 252, "x2": 1277, "y2": 473, "label": "deer"}, {"x1": 437, "y1": 93, "x2": 546, "y2": 300, "label": "tree1"}]}
