@@ -5,14 +5,14 @@ import sys
 from PIL import Image, ImageDraw, ImageFont
 
 from PyQt6.QtCore import Qt, QRect
+from PyQt6.QtGui import (
+    QAction, QBrush, QColor, QFont, QFontMetrics, QImage,
+    QKeySequence, QPainter, QPen, QPixmap,
+)
 from PyQt6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
     QFrame, QHBoxLayout, QInputDialog, QLabel, QListWidget, QMainWindow,
-    QMessageBox, QSizePolicy, QVBoxLayout, QWidget,
-)
-from PyQt6.QtGui import (
-    QAction, QBrush, QColor, QFont, QFontMetrics, QImage,
-    QPainter, QPen, QPixmap,
+    QMessageBox, QShortcut, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 try:
@@ -328,6 +328,24 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
 
         # Menu bar
         self.create_menu_bar()
+
+        # Register window-level keyboard shortcuts so they fire regardless
+        # of which child widget currently holds focus.
+        _shortcuts = [
+            ("S",       self.save_boxes_json_event),
+            ("C",       self.clear_boxes_event),
+            ("U",       self.undo_last_box_event),
+            ("Ctrl+Z",  self.undo_last_box_event),
+            ("L",       self.load_boxes_json_event),
+            ("E",       self.edit_selected_box_label_event),
+            ("D",       self.delete_selected_box_event),
+            ("Delete",  self.delete_selected_box_event),
+            ("Backspace", self.delete_selected_box_event),
+            ("H",       self.toggle_legend_event),
+        ]
+        for seq, slot in _shortcuts:
+            sc = QShortcut(QKeySequence(seq), self)
+            sc.activated.connect(slot)
 
         # Initial load
         self.show()
@@ -1182,34 +1200,6 @@ class ImageBboxSelector(QMainWindow):  # pylint: disable=too-many-instance-attri
     def _on_autosave_action_toggled(self, checked):
         self._autosave_enabled = bool(checked)
         self.on_autosave_setting_changed()
-
-    # -----------------------------
-    # Keyboard shortcuts
-    # -----------------------------
-    def keyPressEvent(self, event):
-        key = event.key()
-        modifiers = event.modifiers()
-
-        if key == Qt.Key.Key_S:
-            self.save_boxes_json_event()
-        elif key == Qt.Key.Key_C:
-            self.clear_boxes_event()
-        elif key == Qt.Key.Key_U:
-            self.undo_last_box_event()
-        elif key == Qt.Key.Key_Z and modifiers & Qt.KeyboardModifier.ControlModifier:
-            self.undo_last_box_event()
-        elif key == Qt.Key.Key_L:
-            self.load_boxes_json_event()
-        elif key == Qt.Key.Key_E:
-            self.edit_selected_box_label_event()
-        elif key == Qt.Key.Key_D:
-            self.delete_selected_box_event()
-        elif key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
-            self.delete_selected_box_event()
-        elif key == Qt.Key.Key_H:
-            self.toggle_legend_event()
-        else:
-            super().keyPressEvent(event)
 
     # -----------------------------
     # Window close
