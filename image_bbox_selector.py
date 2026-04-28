@@ -237,6 +237,7 @@ class ImageBboxSelector:  # pylint: disable=too-many-instance-attributes,too-man
         self.root.bind("<Control-z>", self.undo_last_box_event)  # Undo
         self.root.bind("l", self.load_boxes_json_event)     # Load JSONL
         self.root.bind("e", self.edit_selected_box_label_event)  # Edit selected label
+        self.root.bind("d", self.delete_selected_box_event)  # Delete selected box
         self.root.bind("<Delete>", self.delete_selected_box_event)  # Delete selected box
         self.root.bind("<BackSpace>", self.delete_selected_box_event)  # Delete selected box
         self.root.bind("h", self.toggle_legend_event)       # Toggle legend
@@ -1353,7 +1354,7 @@ class ImageBboxSelector:  # pylint: disable=too-many-instance-attributes,too-man
             current_index = self.loaded_image_order.index(self.current_image_path) + 1
 
         legend_text = (
-            "Shortcuts: S=Save  L=Load  E=Edit Label  Del=Delete  H=Hide/Show\n"
+            "Shortcuts: S=Save  L=Load  E=Edit Label  Del/Backspace/D=Delete  H=Hide/Show\n"
             f"Image: {current_index}/{len(self.loaded_image_order)}  Boxes: {len(self.boxes)}"
         )
 
